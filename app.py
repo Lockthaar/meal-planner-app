@@ -53,9 +53,10 @@ if section == 'Recettes':
                 'Ingredients': json.dumps(ingredients_list, ensure_ascii=False),
                 'Instructions': instructions
             }
-            st.session_state.recipes_df = st.session_state.recipes_df.append(new_row, ignore_index=True)
-            st.success(f"Recette '{name}' ajoutée.")
-
+            st.session_state.recipes_df = pd.concat(
+    [st.session_state.recipes_df, pd.DataFrame([new_row])],
+    ignore_index=True
+)
     st.subheader("Toutes les recettes")
     if not st.session_state.recipes_df.empty:
         for idx, row in st.session_state.recipes_df.iterrows():
