@@ -1,3 +1,5 @@
+# app.py
+
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -6,18 +8,31 @@ from collections import defaultdict
 from typing import Optional
 
 # ----------------------------------------------------------------
+# 1) SET_PAGE_CONFIG DOIT ÊTRE LE TOUT PREMIER APPEL STREAMLIT
+# ----------------------------------------------------------------
+st.set_page_config(page_title="Meal Planner", layout="wide")
+
+# ----------------------------------------------------------------
+# 2) TOUS LES AUTRES APPELS STREAMLIT VIENNENT APRÈS
+# ----------------------------------------------------------------
+st.title("🍴 Meal Planner Application")
+
+# ----------------------------------------------------------------
 # FONCTIONS DE GESTION DE LA BASE DE DONNÉES (SQLite)
 # ----------------------------------------------------------------
 DB_PATH = "meal_planner.db"
 
 def get_connection():
+    """Crée (si besoin) et retourne une connexion à la base SQLite."""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     return conn
 
 def init_db():
+    """Crée les tables users, recipes, mealplans si elles n’existent pas."""
     conn = get_connection()
     cursor = conn.cursor()
 
+    # Table users : id, username, password (en clair pour l’exemple, à ne pas faire en production)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,6 +40,8 @@ def init_db():
         password TEXT NOT NULL
     )
     """)
+
+    # Table recipes : id, user_id, name, ingredients_JSON, instructions
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS recipes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,6 +52,8 @@ def init_db():
         FOREIGN KEY(user_id) REFERENCES users(id)
     )
     """)
+
+    # Table mealplans : id, user_id, day, meal, recipe_name
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS mealplans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,14 +64,22 @@ def init_db():
         FOREIGN KEY(user_id) REFERENCES users(id)
     )
     """)
+
     conn.commit()
     conn.close()
 
 def add_user(username: str, password: str) -> bool:
+    """
+    Tente d’ajouter un nouvel utilisateur.
+    Retourne True si succès, False si le username existe déjà.
+    """
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("INSERT INTO users(username, password) VALUES(?, ?)", (username, password))
+        cursor.execute(
+            "INSERT INTO users(username, password) VALUES(?, ?)",
+            (username, password)
+        )
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -61,28 +88,100 @@ def add_user(username: str, password: str) -> bool:
         conn.close()
 
 def verify_user(username: str, password: str) -> Optional[int]:
+    """
+    Vérifie que le couple (username, password) est valide.
+    Si oui, retourne l’user_id correspondant. Sinon, retourne None.
+    """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM users WHERE username = ? AND password = ?", (username, password))
+    cursor.execute(
+        "SELECT id FROM users WHERE username = ? AND password = ?",
+        (username, password)
+    )
     row = cursor.fetchone()
     conn.close()
     if row:
         return row[0]
     return None
 
-# (…fonctions get_recipes_for_user, insert_recipe, delete_recipe, get_mealplan_for_user, upsert_mealplan, parse_ingredients…)
-# Vous avez déjà ce code, je ne le recopie pas intégralement ici pour rester concis.
+def get_recipes_for_user(user_id: int) -> pd.DataFrame:
+    """
+    Récupère toutes les recettes pour cet user_id sous forme de DataFrame.
+    Colonnes : ['id', 'name', 'ingredients', 'instructions']
+    """
+    conn = get_connection()
+    df = pd.read_sql_query(
+        "SELECT id, name, ingredients, instructions FROM recipes WHERE user_id = ?",
+        conn,
+        params=(user_id,)
+    )
+    conn.close()
+    return df
+
+def insert_recipe(user_id: int, name: str, ingredients_json: str, instructions: str):
+    """Insère une nouvelle recette pour cet utilisateur."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO recipes(user_id, name, ingredients, instructions) VALUES(?, ?, ?, ?)",
+        (user_id, name, ingredients_json, instructions)
+    )
+    conn.commit()
+    conn.close()
+
+def delete_recipe(recipe_id: int):
+    """Supprime la recette dont l’ID est recipe_id."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
+    conn.commit()
+    conn.close()
+
+def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
+    """
+    Récupère le planning de l’utilisateur sous forme de DataFrame.
+    Colonnes : ['id', 'day', 'meal', 'recipe_name']
+    """
+    conn = get_connection()
+    df = pd.read_sql_query(
+        "SELECT id, day, meal, recipe_name FROM mealplans WHERE user_id = ?",
+        conn,
+        params=(user_id,)
+    )
+    conn.close()
+    return df
+
+def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
+    """
+    Remplace (supprime + réinsère) tout le planning pour cet user_id.
+    Pour simplifier, on efface d’abord tout, puis on réinsère.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM mealplans WHERE user_id = ?", (user_id,))
+    conn.commit()
+    for _, row in plan_df.iterrows():
+        cursor.execute(
+            "INSERT INTO mealplans(user_id, day, meal, recipe_name) VALUES(?, ?, ?, ?)",
+            (user_id, row["Day"], row["Meal"], row["Recipe"])
+        )
+    conn.commit()
+    conn.close()
+
+# ----------------------------------------------------------------
+# FONCTION UTILITAIRE : PARSAGE DES INGREDIENTS (JSON ↔ LISTE)
+# ----------------------------------------------------------------
+@st.cache_data
+def parse_ingredients(ing_str: str):
+    try:
+        return json.loads(ing_str)
+    except:
+        return []
 
 # ----------------------------------------------------------------
 # INITIALISATION DE LA BASE (SI NÉCESSAIRE)
 # ----------------------------------------------------------------
 init_db()
-
-# ----------------------------------------------------------------
-# INTERFACE PRINCIPALE
-# ----------------------------------------------------------------
-st.set_page_config(page_title="Meal Planner", layout="wide")
-st.title("🍴 Meal Planner Application")
 
 # ----------------------------------------------------------------
 # PARTIE AUTHENTIFICATION
@@ -92,7 +191,7 @@ if "user_id" not in st.session_state:
 if "username" not in st.session_state:
     st.session_state.username = ""
 
-# **Ici**, on initialise automatiquement ing_count à 1 si elle n’existe pas :  
+# Initialisation du compteur ing_count (pour la section “Recettes”)
 if "ing_count" not in st.session_state:
     st.session_state.ing_count = 1
 
@@ -145,96 +244,16 @@ if st.session_state.user_id is None:
     st.stop()
 
 # ----------------------------------------------------------------
-# FONCTION UTILITAIRE : PARSAGE DES INGREDIENTS (JSON ↔ LISTE)
-# ----------------------------------------------------------------
-@st.cache_data
-def parse_ingredients(ing_str: str):
-    try:
-        return json.loads(ing_str)
-    except:
-        return []
-
-# ----------------------------------------------------------------
-# INITIALISATION DE LA BASE (SI NÉCESSAIRE)
-# ----------------------------------------------------------------
-init_db()
-
-# ----------------------------------------------------------------
-# INTERFACE PRINCIPALE
-# ----------------------------------------------------------------
-st.set_page_config(page_title="Meal Planner", layout="wide")
-st.title("🍴 Meal Planner Application")
-
-# ----------------------------------------------------------------
-# PARTIE AUTHENTIFICATION
-# ----------------------------------------------------------------
-if "user_id" not in st.session_state:
-    st.session_state.user_id = None
-if "username" not in st.session_state:
-    st.session_state.username = ""
-
-def show_login_page():
-    """
-    Affiche le formulaire de Connexion / Inscription.
-    Si la connexion réussit, on met à jour st.session_state.user_id.
-    """
-    st.subheader("🔒 Connexion / Inscription")
-    tab1, tab2 = st.tabs(["Connexion", "Inscription"])
-
-    # --- Onglet Connexion ---
-    with tab1:
-        st.write("### Connexion")
-        login_user = st.text_input("Nom d'utilisateur", key="login_username")
-        login_pwd  = st.text_input("Mot de passe", type="password", key="login_password")
-        if st.button("Se connecter", key="login_button"):
-            uid = verify_user(login_user, login_pwd)
-            if uid:
-                st.session_state.user_id = uid
-                st.session_state.username = login_user
-                st.success(f"Bienvenue, {login_user} ! Vous êtes connecté.")
-                # On ne fait plus st.experimental_rerun() ici.
-            else:
-                st.error("Nom d’utilisateur ou mot de passe incorrect.")
-
-    # --- Onglet Inscription ---
-    with tab2:
-        st.write("### Inscription")
-        new_user = st.text_input("Choisissez un nom d'utilisateur", key="register_username")
-        new_pwd  = st.text_input("Choisissez un mot de passe", type="password", key="register_password")
-        confirm_pwd = st.text_input("Confirmez le mot de passe", type="password", key="register_confirm")
-        if st.button("Créer mon compte", key="register_button"):
-            if not new_user.strip():
-                st.error("Le nom d’utilisateur ne peut pas être vide.")
-            elif new_pwd != confirm_pwd:
-                st.error("Les mots de passe ne correspondent pas.")
-            else:
-                ok = add_user(new_user.strip(), new_pwd)
-                if ok:
-                    st.success("Compte créé avec succès ! Vous pouvez maintenant vous connecter.")
-                else:
-                    st.error(f"Le nom d’utilisateur « {new_user} » existe déjà.")
-
-# Appel du login (ou affichage) 
-show_login_page()
-
-# Comme on a retiré le st.experimental_rerun(), il faut maintenant vérifier 
-# ici si l’utilisateur est toujours non connecté. Si c’est le cas, on arrête.
-if st.session_state.user_id is None:
-    st.stop()
-
-# ----------------------------------------------------------------
 # À CE STADE, L’UTILISATEUR EST CONNECTÉ (user_id, username remplis)
 # ----------------------------------------------------------------
 st.sidebar.write(f"👤 Connecté en tant que **{st.session_state.username}**")
 if st.sidebar.button("🔓 Se déconnecter"):
-    # On réinitialise la session et on rafraîchit
+    # On réinitialise la session et on recharge
     del st.session_state.user_id
     del st.session_state.username
     st.experimental_rerun()
 
-# ----------------------------------------------------------------
-# RAPPEL : USER_ID ACTUEL
-# ----------------------------------------------------------------
+# Récupération de l’ID de l’utilisateur courant
 USER_ID = st.session_state.user_id
 
 # ----------------------------------------------------------------
@@ -263,7 +282,6 @@ if section == "Recettes":
         ingrédients_temp = []
         unités_dispo = ["mg", "g", "kg", "cl", "dl", "l", "pièce(s)"]
 
-        # Affiche toutes les lignes d’ingrédients en fonction de ing_count
         for i in range(st.session_state.ing_count):
             c1, c2, c3 = st.columns([4, 2, 2])
             with c1:
@@ -279,7 +297,7 @@ if section == "Recettes":
 
         # Bouton pour enregistrer la recette
         if st.button("💾 Enregistrer la recette", key="save_recipe"):
-            # Vérifie que le nom n’est pas vide ET qu’il n’existe pas déjà pour cet utilisateur
+            # Vérifie que le nom n’est pas vide et qu’il n’existe pas déjà pour cet utilisateur
             df_recettes = get_recipes_for_user(USER_ID)
             if not name.strip():
                 st.error("Le nom de la recette ne peut pas être vide.")
@@ -318,9 +336,7 @@ if section == "Recettes":
                                 del st.session_state[field]
                     st.session_state.ing_count = 1
 
-                    # Après avoir ajouté la recette, on relance simplement un "refresh" local 
-                    # en appelant st.experimental_rerun() ici (uniquement pour afficher la nouvelle recette).
-                    # Mais cette fois, comme on n’est plus dans la page de login, cela ne posera pas d’erreur.
+                    # Après avoir ajouté la recette, on rafraîchit pour afficher la nouvelle
                     st.experimental_rerun()
 
     st.markdown("---")
@@ -358,7 +374,6 @@ elif section == "Planificateur":
     df_recettes = get_recipes_for_user(USER_ID)
     choix_recettes = [""] + df_recettes["name"].tolist()
 
-    # On crée un petit formulaire
     with st.form(key="plan_form"):
         selections = []
         cols = st.columns(3)
@@ -373,7 +388,6 @@ elif section == "Planificateur":
         submit = st.form_submit_button("💾 Enregistrer le plan")
         if submit:
             df_plan = pd.DataFrame(selections, columns=["Day", "Meal", "Recipe"])
-            # On ne garde que les lignes où l’utilisateur a sélectionné une recette
             df_plan = df_plan[df_plan["Recipe"] != ""].reset_index(drop=True)
             upsert_mealplan(USER_ID, df_plan)
             st.success("Plan de la semaine enregistré.")
@@ -384,9 +398,10 @@ elif section == "Planificateur":
     if df_current_plan.empty:
         st.info("Vous n’avez pas encore de plan pour cette semaine.")
     else:
-        st.table(df_current_plan[["day", "meal", "recipe_name"]].rename(
-            columns={"day": "Jour", "meal": "Repas", "recipe_name": "Recette"}
-        ))
+        st.table(
+            df_current_plan[["day", "meal", "recipe_name"]]
+            .rename(columns={"day": "Jour", "meal": "Repas", "recipe_name": "Recette"})
+        )
 
 # ----------------------------------------------------------------
 # SECTION 3 : GÉNÉRER LA LISTE DE COURSES
