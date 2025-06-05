@@ -73,7 +73,7 @@ st.markdown(
             color: #FFA500;
         }
 
-        /* Adjust the top padding so that content isn't hidden behind the navbar */
+        /* Ajuste le padding pour que le contenu ne soit pas caché derrière la navbar */
         .streamlit-container {
             padding-top: 80px !important;
         }
@@ -115,6 +115,7 @@ st.markdown(
             overflow: hidden;
             box-shadow: 0 2px 8px rgba(0,0,0,0.05);
             transition: transform 0.2s, box-shadow 0.2s;
+            background: white;
         }
         .recipe-card:hover {
             transform: translateY(-5px);
@@ -221,7 +222,7 @@ st.markdown(
 )
 
 # -------------------------------------------------------------------------------
-# 3) BASE DE DONNÉES SQLITE (COMPTES, RECETTES, PLANNINGS) – inchangé
+# 3) BASE DE DONNÉES SQLITE (COMPTES, RECETTES, PLANNINGS) – avec ALTER pour image_url
 # -------------------------------------------------------------------------------
 DB_PATH = "meal_planner.db"
 
@@ -230,8 +231,14 @@ def get_connection():
     return conn
 
 def init_db():
+    """
+    1) Crée les tables users, recipes, mealplans si elles n’existent pas.
+    2) Vérifie si la colonne image_url existe dans recipes ; sinon l’ajoute.
+    """
     conn = get_connection()
     cursor = conn.cursor()
+
+    # Table users : id, username, password
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -239,17 +246,31 @@ def init_db():
         password TEXT NOT NULL
     )
     """)
+
+    # Table recipes : id, user_id, name, image_url, ingredients, instructions
+    # On crée au moins une table contenant au minimum (id, user_id, name, ingredients, instructions).
+    # Ensuite on vérifie si image_url existe ; sinon on l'ajoute.
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS recipes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         name TEXT NOT NULL,
-        image_url TEXT,
         ingredients TEXT NOT NULL,
         instructions TEXT,
         FOREIGN KEY(user_id) REFERENCES users(id)
     )
     """)
+    conn.commit()
+
+    # Vérification de la colonne image_url
+    cursor.execute("PRAGMA table_info(recipes)")
+    cols = cursor.fetchall()
+    col_names = [col[1] for col in cols]  # col[1] est le nom de la colonne
+    if "image_url" not in col_names:
+        cursor.execute("ALTER TABLE recipes ADD COLUMN image_url TEXT")
+        conn.commit()
+
+    # Table mealplans : id, user_id, day, meal, recipe_name
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS mealplans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -264,6 +285,10 @@ def init_db():
     conn.close()
 
 def add_user(username: str, password: str) -> bool:
+    """
+    Tente d’ajouter un nouvel utilisateur.
+    Retourne True si succès, False si le username existe déjà.
+    """
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -279,6 +304,10 @@ def add_user(username: str, password: str) -> bool:
         conn.close()
 
 def verify_user(username: str, password: str) -> Optional[int]:
+    """
+    Vérifie que le couple (username, password) est valide.
+    Si oui, retourne l’user_id. Sinon, retourne None.
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -292,6 +321,10 @@ def verify_user(username: str, password: str) -> Optional[int]:
     return None
 
 def get_recipes_for_user(user_id: int) -> pd.DataFrame:
+    """
+    Récupère toutes les recettes pour cet user_id sous forme de DataFrame.
+    Colonnes : ['id', 'name', 'image_url', 'ingredients', 'instructions']
+    """
     conn = get_connection()
     df = pd.read_sql_query(
         "SELECT id, name, image_url, ingredients, instructions FROM recipes WHERE user_id = ?",
@@ -302,6 +335,10 @@ def get_recipes_for_user(user_id: int) -> pd.DataFrame:
     return df
 
 def insert_recipe(user_id: int, name: str, image_url: str, ingredients_json: str, instructions: str):
+    """
+    Insère une nouvelle recette pour cet utilisateur,
+    en incluant (éventuellement) l’URL de l’image.
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -312,6 +349,7 @@ def insert_recipe(user_id: int, name: str, image_url: str, ingredients_json: str
     conn.close()
 
 def delete_recipe(recipe_id: int):
+    """Supprime la recette dont l’ID est recipe_id."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
@@ -319,6 +357,10 @@ def delete_recipe(recipe_id: int):
     conn.close()
 
 def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
+    """
+    Récupère le planning de l’utilisateur sous forme de DataFrame.
+    Colonnes : ['id', 'day', 'meal', 'recipe_name']
+    """
     conn = get_connection()
     df = pd.read_sql_query(
         "SELECT id, day, meal, recipe_name FROM mealplans WHERE user_id = ?",
@@ -329,6 +371,10 @@ def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
     return df
 
 def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
+    """
+    Remplace (supprime + réinsère) tout le planning pour cet user_id.
+    Pour simplifier, on efface d’abord tout, puis on réinsère toutes les lignes.
+    """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM mealplans WHERE user_id = ?", (user_id,))
@@ -343,11 +389,16 @@ def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
 
 @st.cache_data
 def parse_ingredients(ing_str: str):
+    """
+    Convertit la chaîne JSON enregistrée dans 'ingredients' 
+    en liste de dictionnaires {"ingredient", "quantity", "unit"}.
+    """
     try:
         return json.loads(ing_str)
     except:
         return []
 
+# Initialisation / création des tables et ajout de image_url si besoin
 init_db()
 
 # -------------------------------------------------------------------------------
@@ -396,7 +447,7 @@ def show_login_page():
                 else:
                     st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà.")
 
-# Si l’utilisateur n’est pas connecté, on affiche uniquement Connexion/Inscription
+# Si l’utilisateur n’est pas connecté, on affiche seulement la page de login/inscription
 if st.session_state.user_id is None:
     show_login_page()
     st.stop()
@@ -438,6 +489,7 @@ with st.sidebar:
 
 # SECTION “Mes recettes”
 if section == "Mes recettes":
+    st.markdown('<div id="recipes"></div>', unsafe_allow_html=True)
     st.header("📋 Mes recettes")
     st.markdown("Ajoutez, consultez, modifiez ou supprimez vos recettes personnelles.")
 
@@ -570,6 +622,7 @@ if section == "Mes recettes":
     if df_recettes.empty:
         st.info("Vous n’avez (encore) aucune recette enregistrée. Utilisez le formulaire ci-dessus pour en ajouter !")
     else:
+        st.markdown('<div id="recipes"></div>', unsafe_allow_html=True)
         st.markdown("### 📖 Vos recettes")
         # On affiche 3 cards par ligne (responsive)
         cards_per_row = 3
@@ -580,7 +633,7 @@ if section == "Mes recettes":
                     row = df_recettes.iloc[i + idx]
                     recipe_id = row["id"]
                     recipe_name = row["name"]
-                    image_url = row["image_url"] or "https://via.placeholder.com/300x180.png?text=Pas+d'image"
+                    image_url = row["image_url"] or "https://via.placeholder.com/300x180.png?text=Pas+d%27image"
                     ingrédients = parse_ingredients(row["ingredients"])
                     instructions_txt = row["instructions"] or "Aucune instruction précisée."
 
@@ -595,8 +648,8 @@ if section == "Mes recettes":
                                     {', '.join([ing['ingredient'] for ing in ingrédients][:5])}...
                                 </div>
                                 <div class="recipe-card-buttons">
-                                    <button onclick="window.location.hash='#'">Voir</button>
-                                    <button onclick="window.location.hash='#'">Modifier</button>
+                                    <button onclick="alert('Affichage simplifié pour le moment !')">Voir</button>
+                                    <button onclick="alert('Modifier non implémenté ici')">Modifier</button>
                                 </div>
                               </div>
                             </div>
@@ -606,6 +659,7 @@ if section == "Mes recettes":
 
 # SECTION “Planificateur”
 elif section == "Planificateur":
+    st.markdown('<div id="planner"></div>', unsafe_allow_html=True)
     st.header("📅 Planifier mes repas")
     st.markdown("Choisissez une recette pour chaque jour et chaque repas.")
 
@@ -651,6 +705,7 @@ elif section == "Planificateur":
 
 # SECTION “Liste de courses”
 elif section == "Liste de courses":
+    st.markdown('<div id="shopping"></div>', unsafe_allow_html=True)
     st.header("🛒 Liste de courses générée")
     st.markdown("La liste est automatiquement compilée d’après votre planning.")
 
@@ -680,7 +735,6 @@ elif section == "Liste de courses":
         ]
         shopping_df = pd.DataFrame(shopping_data)
 
-        # Tableau stylisé
         st.table(shopping_df)
 
         # Bouton téléchargement CSV
@@ -696,6 +750,7 @@ elif section == "Liste de courses":
 
 # SECTION “Impression”
 else:  # section == "Impression"
+    st.markdown('<div id="print"></div>', unsafe_allow_html=True)
     st.header("🖨️ Liste de courses imprimable")
     st.markdown("Affichez la liste ci-dessous et utilisez votre navigateur pour imprimer (Ctrl+P / ⌘+P).")
 
