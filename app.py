@@ -52,7 +52,7 @@ if section == "Recettes":
         # Champ pour le nom de la recette
         name = st.text_input("Nom de la recette", key="new_name")
 
-        # Gestion dynamique du nombre de lignes d'ingrédients
+        # Gestion dynamique du nombre de lignes d’ingrédients
         st.write("**Ingrédients**")
         st.write("Pour ajouter une nouvelle ligne :")
         if st.button("➕ Ajouter une ligne d’ingrédient"):
@@ -70,10 +70,9 @@ if section == "Recettes":
                 qty_i = st.number_input(f"Quantité #{i+1}", min_value=0.0, format="%.2f", key=f"ing_qty_{i}")
             with c3:
                 unit_i = st.selectbox(f"Unité #{i+1}", unités_dispo, key=f"ing_unit_{i}")
-
             ingrédients_temp.append((ingr_i, qty_i, unit_i))
 
-        # Champ d'instructions
+        # Champ d’instructions
         instructions = st.text_area("Instructions", key="new_instructions")
 
         # Bouton pour enregistrer la recette
@@ -119,7 +118,7 @@ if section == "Recettes":
                     # On supprime la clé "new_name" si elle est présente
                     if "new_name" in st.session_state:
                         del st.session_state["new_name"]
-                    # On supprime la clé "new_instructions" si elle est présente
+                    # On supprime la clé "new_instructions"
                     if "new_instructions" in st.session_state:
                         del st.session_state["new_instructions"]
                     # Pour chaque ligne d’ingrédient, on supprime les clés utilisées
@@ -129,9 +128,6 @@ if section == "Recettes":
                                 del st.session_state[field]
                     # On remet le compteur d’ingrédients à 1
                     st.session_state.ing_count = 1
-
-                    # On relance l’app pour que les champs se resetent
-                    st.experimental_rerun()
 
     st.markdown("---")
     st.write("**2. Liste des recettes existantes**")
