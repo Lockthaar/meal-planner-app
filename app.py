@@ -23,7 +23,7 @@ st.markdown(
     """
     <style>
         /* Masquer le menu hamburger en haut à droite */
-        # MainMenu {visibility: hidden;}
+        #MainMenu {visibility: hidden;}
         /* Masquer le footer “Made with Streamlit” */
         footer {visibility: hidden;}
         /* Changer la police et la couleur des headers */
@@ -75,7 +75,7 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Table users : id, username, password (en clair pour l’exemple — à ne pas faire en prod)
+    # Table users : id, username, password (en clair pour l’exemple, à ne pas faire en prod)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -254,7 +254,7 @@ def show_login_page():
                 st.session_state.user_id = uid
                 st.session_state.username = login_user.strip()
                 st.success(f"Bienvenue, **{login_user.strip()}** ! Vous êtes connecté.")
-                # On ne force plus le rerun ici, on laisse le script continuer naturellement
+                # Pas de st.experimental_rerun() ici
             else:
                 st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
@@ -276,11 +276,9 @@ def show_login_page():
                 else:
                     st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà.")
 
-# Affiche d’abord la page de login/inscription
-show_login_page()
-
-# Tant que l’utilisateur n’est pas connecté, on stoppe le reste
+# S’il n’y a PAS de session utilisateur, on affiche Login/Inscription
 if st.session_state.user_id is None:
+    show_login_page()
     st.stop()
 
 # ----------------------------------------------------------------
@@ -315,7 +313,7 @@ with st.sidebar:
     )
 
 # ----------------------------------------------------------------
-# FONCTIONNALITÉS PAR SECTION
+# 6) FONCTIONNALITÉS PAR SECTION
 # ----------------------------------------------------------------
 
 # Section “Mes recettes”
@@ -323,31 +321,71 @@ if section == "Mes recettes":
     st.header("📋 Mes recettes")
     st.markdown("Ajoutez, consultez ou supprimez vos recettes personnelles.")
 
-    # 5.1 – Formulaire d’ajout de recette
+    # 6.1 – Formulaire d’ajout de recette (avec deux modes : manuel vs import texte)
     with st.expander("➕ Ajouter une nouvelle recette", expanded=True):
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            name = st.text_input("Nom de la recette", key="new_name", placeholder="Ex. : Poulet au curry")
-        with col2:
-            # Permet d’ajouter dynamiquement plusieurs lignes d’ingrédients
-            st.write("**Lignes d’ingrédients :**")
-            if st.button("➕ Ajouter une ligne", key="add_ing", use_container_width=True):
-                st.session_state.ing_count += 1
+        st.markdown("**Mode de saisie :**")
+        mode = st.radio(
+            label="Choisir le mode d’ajout",
+            options=["Saisie manuelle", "Importer depuis texte"],
+            index=0,
+            horizontal=True
+        )
+        name = st.text_input("Nom de la recette", key="new_name", placeholder="Ex. : Poulet au curry")
 
-        # Affiche les lignes en fonction de ing_count
-        ingrédients_temp = []
+        ingrédients_list = []
         unités_dispo = ["mg", "g", "kg", "cl", "dl", "l", "pièce(s)"]
 
-        for i in range(st.session_state.ing_count):
-            c1, c2, c3 = st.columns([4, 2, 2])
-            with c1:
-                ingr_i = st.text_input(f"Ingrédient #{i+1}", key=f"ing_nom_{i}", placeholder="Ex. : Farine")
-            with c2:
-                qty_i = st.number_input(f"Quantité #{i+1}", min_value=0.0, format="%.2f", key=f"ing_qty_{i}")
-            with c3:
-                unit_i = st.selectbox(f"Unité #{i+1}", unités_dispo, key=f"ing_unit_{i}")
-            ingrédients_temp.append((ingr_i, qty_i, unit_i))
+        if mode == "Saisie manuelle":
+            # --- Mode manuel : plusieurs lignes dynamiques comme précédemment
+            col1, col2 = st.columns([2, 1])
+            with col2:
+                st.write("**Lignes d’ingrédients**")
+                if st.button("➕ Ajouter une ligne", key="add_ing"):
+                    st.session_state.ing_count += 1
 
+            # Affiche les lignes en fonction de ing_count
+            ingrédients_temp = []
+            for i in range(st.session_state.ing_count):
+                c1, c2, c3 = st.columns([4, 2, 2])
+                with c1:
+                    ingr_i = st.text_input(f"Ingrédient #{i+1}", key=f"ing_nom_{i}", placeholder="Ex. : Farine")
+                with c2:
+                    qty_i = st.number_input(f"Quantité #{i+1}", min_value=0.0, format="%.2f", key=f"ing_qty_{i}")
+                with c3:
+                    unit_i = st.selectbox(f"Unité #{i+1}", unités_dispo, key=f"ing_unit_{i}")
+                ingrédients_temp.append((ingr_i, qty_i, unit_i))
+            # On utilisera ingrédients_temp plus bas
+            ingrédients_list = ingrédients_temp
+
+        else:
+            # --- Mode “Importer depuis texte” : l’utilisateur copie/colle ses lignes
+            raw_text = st.text_area(
+                "Copiez/collez votre liste d’ingrédients",
+                key="import_textarea",
+                placeholder="Exemple :\nTomates, 200, g\nPâtes, 300, g\nFromage, 100, g"
+            )
+            if raw_text:
+                lignes = raw_text.strip().split("\n")
+                for line in lignes:
+                    parts = [p.strip() for p in line.split(",")]
+                    if len(parts) == 3:
+                        ingr, qty, unit = parts
+                        try:
+                            qty_val = float(qty)
+                        except:
+                            qty_val = 0.0
+                        if ingr and qty_val > 0:
+                            # On stocke sous la forme d’un tuple (ingr, qty, unit)
+                            ingrédients_list.append((ingr, qty_val, unit))
+                # On peut afficher un petit aperçu
+                st.markdown("**Aperçu des ingrédients importés :**")
+                if ingrédients_list:
+                    for ingr_i, qty_i, unit_i in ingrédients_list:
+                        st.write(f"- {ingr_i}: {qty_i} {unit_i}")
+                else:
+                    st.warning("Aucun ingrédient valide détecté dans le texte saisi.")
+
+        # Champ d’instructions (commun aux deux modes)
         instructions = st.text_area("Instructions (facultatif)", key="new_instructions", placeholder="Décrivez ici la préparation…")
 
         if st.button("💾 Enregistrer la recette", key="save_recipe", use_container_width=True):
@@ -357,39 +395,45 @@ if section == "Mes recettes":
             elif name.strip() in df_recettes["name"].tolist():
                 st.error(f"❌ Vous avez déjà une recette appelée « {name.strip()} ».")
             else:
-                # Filtrage des ingrédients valides (nom non vide + qty > 0)
-                ingrédients_list = []
-                for ingr_i, qty_i, unit_i in ingrédients_temp:
-                    if ingr_i.strip() != "" and qty_i > 0:
-                        ingrédients_list.append({
+                # Construction de la liste d’ingrédients JSON
+                ing_json_list = []
+                for ingr_i, qty_i, unit_i in ingrédients_list:
+                    if ingr_i.strip() and qty_i > 0 and unit_i.strip():
+                        ing_json_list.append({
                             "ingredient": ingr_i.strip(),
                             "quantity": float(qty_i),
-                            "unit": unit_i
+                            "unit": unit_i.strip()
                         })
 
-                if len(ingrédients_list) == 0:
-                    st.error("❌ Veuillez remplir au moins un ingrédient valide (nom + quantité > 0).")
+                if len(ing_json_list) == 0:
+                    st.error("❌ Veuillez remplir au moins un ingrédient valide.")
                 else:
-                    ing_json = json.dumps(ingrédients_list, ensure_ascii=False)
-                    insert_recipe(USER_ID, name.strip(), ing_json, instructions.strip())
+                    ing_json_str = json.dumps(ing_json_list, ensure_ascii=False)
+                    insert_recipe(USER_ID, name.strip(), ing_json_str, instructions.strip())
                     st.success(f"✅ Recette « {name.strip()} » ajoutée avec succès.")
 
                     # Réinitialisation du formulaire
                     if "new_name" in st.session_state:
                         del st.session_state["new_name"]
+                    if mode == "Saisie manuelle":
+                        if "ing_count" in st.session_state:
+                            del st.session_state["ing_count"]
+                        st.session_state.ing_count = 1
+                        for j in range(0, 10):  # on supprime généreusement jusqu’à 10 lignes
+                            for field in (f"ing_nom_{j}", f"ing_qty_{j}", f"ing_unit_{j}"):
+                                if field in st.session_state:
+                                    del st.session_state[field]
+                    else:
+                        if "import_textarea" in st.session_state:
+                            del st.session_state["import_textarea"]
                     if "new_instructions" in st.session_state:
                         del st.session_state["new_instructions"]
-                    for j in range(st.session_state.ing_count):
-                        for field in (f"ing_nom_{j}", f"ing_qty_{j}", f"ing_unit_{j}"):
-                            if field in st.session_state:
-                                del st.session_state[field]
-                    st.session_state.ing_count = 1
 
                     st.experimental_rerun()
 
     st.markdown("---")
 
-    # 5.2 – Affichage des recettes existantes en expanders individuels
+    # 6.2 – Affichage des recettes existantes en expanders individuels
     df_recettes = get_recipes_for_user(USER_ID)
     if df_recettes.empty:
         st.info("Vous n’avez (encore) aucune recette enregistrée. Utilisez le formulaire ci-dessus pour en ajouter !")
@@ -405,7 +449,7 @@ if section == "Mes recettes":
                     st.markdown("**Instructions :**")
                     st.write(row["instructions"] or "_Aucune instruction précisée._")
                 with colon2:
-                    if st.button("🗑️ Supprimer la recette", key=f"delete_recipe_{row['id']}", use_container_width=True):
+                    if st.button("🗑️ Supprimer", key=f"delete_recipe_{row['id']}", use_container_width=True):
                         delete_recipe(row["id"])
                         st.success(f"❌ Recette « {row['name']} » supprimée.")
                         st.experimental_rerun()
