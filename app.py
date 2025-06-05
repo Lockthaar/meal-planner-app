@@ -1,3 +1,5 @@
+# app.py
+
 # -*- coding: utf-8 -*-
 import streamlit as st
 import sqlite3
@@ -22,7 +24,8 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Table users : id, username, password (en clair pour l’exemple, à ne pas faire en prod)
+    # Table users : id, username, password (en clair pour l’exemple, 
+    #              => à ne pas faire en production !)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,7 +64,7 @@ def init_db():
 def add_user(username: str, password: str) -> bool:
     """
     Tente d’ajouter un nouvel utilisateur.
-    Retourne True si ça a fonctionné, False si le username existe déjà.
+    Retourne True si succès, False si le username existe déjà.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -80,7 +83,7 @@ def add_user(username: str, password: str) -> bool:
 def verify_user(username: str, password: str) -> Optional[int]:
     """
     Vérifie que le couple (username, password) est valide.
-    Si oui, retourne l’user_id correspondant. Sinon, retourne None.
+    Si oui, retourne l’user_id. Sinon, retourne None.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -188,6 +191,10 @@ if "username" not in st.session_state:
     st.session_state.username = ""
 
 def show_login_page():
+    """
+    Affiche le formulaire de Connexion / Inscription.
+    Si la connexion réussit, on met à jour st.session_state.user_id.
+    """
     st.subheader("🔒 Connexion / Inscription")
     tab1, tab2 = st.tabs(["Connexion", "Inscription"])
 
@@ -202,8 +209,7 @@ def show_login_page():
                 st.session_state.user_id = uid
                 st.session_state.username = login_user
                 st.success(f"Bienvenue, {login_user} ! Vous êtes connecté.")
-                # Petite pause pour laisser l’utilisateur voir le message avant reload
-                st.experimental_rerun()
+                # On ne fait plus st.experimental_rerun() ici.
             else:
                 st.error("Nom d’utilisateur ou mot de passe incorrect.")
 
@@ -225,19 +231,20 @@ def show_login_page():
                 else:
                     st.error(f"Le nom d’utilisateur « {new_user} » existe déjà.")
 
-# ----------------------------------------------------------------
-# SI L’UTILISATEUR N’EST PAS CONNECTÉ, ON AFFICHE LE LOGIN/REGISTER
-# ----------------------------------------------------------------
+# Appel du login (ou affichage) 
+show_login_page()
+
+# Comme on a retiré le st.experimental_rerun(), il faut maintenant vérifier 
+# ici si l’utilisateur est toujours non connecté. Si c’est le cas, on arrête.
 if st.session_state.user_id is None:
-    show_login_page()
-    st.stop()  # Empêche d’afficher le reste de l’application tant que non connecté
+    st.stop()
 
 # ----------------------------------------------------------------
 # À CE STADE, L’UTILISATEUR EST CONNECTÉ (user_id, username remplis)
 # ----------------------------------------------------------------
 st.sidebar.write(f"👤 Connecté en tant que **{st.session_state.username}**")
 if st.sidebar.button("🔓 Se déconnecter"):
-    # On vide la session_state et on recharge
+    # On réinitialise la session et on rafraîchit
     del st.session_state.user_id
     del st.session_state.username
     st.experimental_rerun()
@@ -273,6 +280,7 @@ if section == "Recettes":
         ingrédients_temp = []
         unités_dispo = ["mg", "g", "kg", "cl", "dl", "l", "pièce(s)"]
 
+        # Affiche toutes les lignes d’ingrédients en fonction de ing_count
         for i in range(st.session_state.ing_count):
             c1, c2, c3 = st.columns([4, 2, 2])
             with c1:
@@ -288,7 +296,7 @@ if section == "Recettes":
 
         # Bouton pour enregistrer la recette
         if st.button("💾 Enregistrer la recette", key="save_recipe"):
-            # Vérifie que le nom n’est pas vide et qu’il n’existe pas déjà pour cet utilisateur
+            # Vérifie que le nom n’est pas vide ET qu’il n’existe pas déjà pour cet utilisateur
             df_recettes = get_recipes_for_user(USER_ID)
             if not name.strip():
                 st.error("Le nom de la recette ne peut pas être vide.")
@@ -305,7 +313,7 @@ if section == "Recettes":
                             "unit": unit_i
                         })
 
-                # Si aucun ingrédient valide, affiche une erreur
+                # Si aucun ingrédient valide, on signale une erreur
                 if len(ingrédients_list) == 0:
                     st.error("Veuillez remplir au moins un ingrédient valide (nom non vide et quantité > 0).")
                 else:
@@ -316,7 +324,7 @@ if section == "Recettes":
                     insert_recipe(USER_ID, name.strip(), ing_json, instructions.strip())
                     st.success(f"Recette « {name.strip()} » ajoutée.")
 
-                    # Réinitialisation du formulaire (suppression des clés)
+                    # Réinitialisation du formulaire (suppression des clés session_state)
                     if "new_name" in st.session_state:
                         del st.session_state["new_name"]
                     if "new_instructions" in st.session_state:
@@ -327,7 +335,9 @@ if section == "Recettes":
                                 del st.session_state[field]
                     st.session_state.ing_count = 1
 
-                    # On redessine la page pour afficher la nouvelle recette
+                    # Après avoir ajouté la recette, on relance simplement un "refresh" local 
+                    # en appelant st.experimental_rerun() ici (uniquement pour afficher la nouvelle recette).
+                    # Mais cette fois, comme on n’est plus dans la page de login, cela ne posera pas d’erreur.
                     st.experimental_rerun()
 
     st.markdown("---")
@@ -384,13 +394,13 @@ elif section == "Planificateur":
             df_plan = df_plan[df_plan["Recipe"] != ""].reset_index(drop=True)
             upsert_mealplan(USER_ID, df_plan)
             st.success("Plan de la semaine enregistré.")
+            st.experimental_rerun()
 
     st.markdown("**Plan actuel**")
     df_current_plan = get_mealplan_for_user(USER_ID)
     if df_current_plan.empty:
         st.info("Vous n’avez pas encore de plan pour cette semaine.")
     else:
-        # On affiche sous forme de tableau
         st.table(df_current_plan[["day", "meal", "recipe_name"]].rename(
             columns={"day": "Jour", "meal": "Repas", "recipe_name": "Recette"}
         ))
@@ -405,11 +415,9 @@ elif section == "Liste de courses":
     if df_current_plan.empty:
         st.info("Planifiez d’abord vos repas pour générer la liste de courses.")
     else:
-        # Agrégation des ingrédients de toutes les recettes du plan
         total_ingredients = defaultdict(lambda: {"quantity": 0, "unit": ""})
         for _, row in df_current_plan.iterrows():
             recette_name = row["recipe_name"]
-            # On récupère la ligne de la recette correspondante
             df_recettes = get_recipes_for_user(USER_ID)
             row_rec = df_recettes[df_recettes["name"] == recette_name]
             if not row_rec.empty:
