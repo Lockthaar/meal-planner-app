@@ -1,5 +1,3 @@
-# app.py
-
 import streamlit as st
 import pandas as pd
 import json
@@ -72,7 +70,6 @@ if section == "Recettes":
                 qty_i = st.number_input(f"Quantité #{i+1}", min_value=0.0, format="%.2f", key=f"ing_qty_{i}")
             with c3:
                 unit_i = st.selectbox(f"Unité #{i+1}", unités_dispo, key=f"ing_unit_{i}")
-
             ingrédients_temp.append((ingr_i, qty_i, unit_i))
 
         # Champ d’instructions
@@ -115,15 +112,25 @@ if section == "Recettes":
 
                     st.success(f"Recette '{name}' ajoutée.")
 
-                    # Réinitialiser le formulaire (nom, instructions, lignes d’ingrédients)
-                    st.session_state.new_name = ""
-                    st.session_state.new_instructions = ""
-                    # Remise à 1 de ing_count et suppression des clés de session pour les lignes
-                    for i in range(st.session_state.ing_count):
-                        for field in (f"ing_nom_{i}", f"ing_qty_{i}", f"ing_unit_{i}"):
+                    # ----------------------------
+                    # RÉINITIALISATION DU FORMULAIRE
+                    # ----------------------------
+                    # On supprime la clé "new_name" si elle est présente
+                    if "new_name" in st.session_state:
+                        del st.session_state["new_name"]
+                    # On supprime la clé "new_instructions"
+                    if "new_instructions" in st.session_state:
+                        del st.session_state["new_instructions"]
+                    # Pour chaque ligne d’ingrédient, on supprime les clés utilisées
+                    for j in range(st.session_state.ing_count):
+                        for field in (f"ing_nom_{j}", f"ing_qty_{j}", f"ing_unit_{j}"):
                             if field in st.session_state:
                                 del st.session_state[field]
+                    # On remet le compteur d’ingrédients à 1
                     st.session_state.ing_count = 1
+
+                    # On relance l’app pour que les champs se resetent
+                    st.experimental_rerun()
 
     st.markdown("---")
     st.write("**2. Liste des recettes existantes**")
@@ -262,9 +269,17 @@ else:  # section == "Impression"
 # ----------------------------------------------------------------
 st.sidebar.markdown("---")
 st.sidebar.write(
-    "**Instructions pour lancer cette app en local :**\n"
-    "1. Installez Streamlit : `pip install streamlit pandas`\n"
-    "2. Placez ce fichier en tant que `app.py` dans votre projet.\n"
-    "3. Lancez : `streamlit run app.py`\n"
+    "**Instructions pour lancer cette app en local :**\\n"
+    "1. Installez Streamlit : `pip install streamlit pandas`\\n"
+    "2. Placez ce fichier en tant que `app.py` dans votre projet.\\n"
+    "3. Lancez : `streamlit run app.py`\\n"
     "4. Ouvrez l’URL locale affichée dans votre navigateur."
 )
+"""
+
+# On sauve le fichier à l’endroit /mnt/data pour que vous puissiez le télécharger
+with open("/mnt/data/app.py", "w") as f:
+    f.write(app_py_content)
+
+# Affichez simplement le chemin pour le lien de téléchargement
+"/mnt/data/app.py"
