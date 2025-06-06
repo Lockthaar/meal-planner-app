@@ -10,7 +10,7 @@ import io
 from datetime import datetime, timedelta
 
 # -------------------------------------------------------------------------------
-# 1) CONFIGURATION GLOBALE : page config, CSS “global” pour navbar + cards
+# 1) CONFIGURATION GLOBALE : page config + CSS “global”
 # -------------------------------------------------------------------------------
 st.set_page_config(
     page_title="Batchist: Meal Planner & Batch Cooking",
@@ -18,7 +18,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# CSS global : Google Font, masque menu Streamlit, navbar fixe, hero, cards, etc.
 st.markdown(
     """
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
@@ -171,7 +170,7 @@ st.markdown(
 )
 
 # -------------------------------------------------------------------------------
-# 2) STRUCTURE DE LA PAGE : NAVBAR + HERO
+# 2) STRUCTURE : NAVBAR + HERO
 # -------------------------------------------------------------------------------
 st.markdown(
     """
@@ -209,18 +208,17 @@ st.markdown(
 )
 
 # -------------------------------------------------------------------------------
-# 3) BASE DE DONNÉES SQLITE (COMPTES, RECETTES, PLANNINGS, PROFIL)
+# 3) BASE DE DONNÉES SQLITE
 # -------------------------------------------------------------------------------
 DB_PATH = "meal_planner.db"
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    return conn
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 def init_db():
     """
-    1) Crée les tables users, recipes, mealplans si elles n’existent pas.
-    2) Ajoute les colonnes profil / extras / image_url si manquantes.
+    Crée les tables users, recipes, mealplans si elles n’existent pas,
+    puis ajoute les colonnes manquantes si besoin.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -286,7 +284,7 @@ def init_db():
 def add_user(username: str, password: str) -> bool:
     """
     Tente d’ajouter un nouvel utilisateur.
-    Retourne True si succès, False si le username existe déjà.
+    Retourne True si OK, False si le username existe déjà.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -304,8 +302,8 @@ def add_user(username: str, password: str) -> bool:
 
 def verify_user(username: str, password: str) -> Optional[int]:
     """
-    Vérifie si (username, password) est valide.
-    Retourne l’ID de l’utilisateur ou None si échec.
+    Vérifie que (username, password) existe en base.
+    Si oui, retourne l’ID de l’utilisateur. Sinon, None.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -319,12 +317,13 @@ def verify_user(username: str, password: str) -> Optional[int]:
 
 def get_user_profile(user_id: int) -> dict:
     """
-    Récupère le profil de l’utilisateur (household_type, meals_per_day, num_children, num_adolescents, num_adults).
+    Récupère le profil complet de l’utilisateur (household_type, meals_per_day, num_children, num_adolescents, num_adults).
     """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT household_type, meals_per_day, num_children, num_adolescents, num_adults FROM users WHERE id = ?",
+        "SELECT household_type, meals_per_day, num_children, num_adolescents, num_adults "
+        "FROM users WHERE id = ?",
         (user_id,)
     )
     row = cursor.fetchone()
@@ -341,8 +340,7 @@ def get_user_profile(user_id: int) -> dict:
 
 def update_user_profile(user_id: int, profile: dict):
     """
-    Met à jour les champs de profil dans la table users.
-    profile doit contenir keys: household_type, meals_per_day, num_children, num_adolescents, num_adults
+    Met à jour en base les champs de profil (household_type, meals_per_day, num_children, num_adolescents, num_adults).
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -366,13 +364,14 @@ def update_user_profile(user_id: int, profile: dict):
 
 def get_recipes_for_user(user_id: int) -> pd.DataFrame:
     """
-    Récupère toutes les recettes pour cet user_id sous forme de DataFrame.
-    Colonnes : ['id', 'name', 'image_url', 'ingredients', 'instructions', 'extras_json']
+    Récupère toutes les recettes de l’utilisateur sous forme de DataFrame.
+    Colonnes : ['id','name','image_url','ingredients','instructions','extras_json'].
     """
     conn = get_connection()
     try:
         df = pd.read_sql_query(
-            "SELECT id, name, image_url, ingredients, instructions, extras_json FROM recipes WHERE user_id = ?",
+            "SELECT id, name, image_url, ingredients, instructions, extras_json "
+            "FROM recipes WHERE user_id = ?",
             conn,
             params=(user_id,)
         )
@@ -385,12 +384,13 @@ def get_recipes_for_user(user_id: int) -> pd.DataFrame:
 def insert_recipe(user_id: int, name: str, image_url: str, ingredients_json: str,
                   instructions: str, extras_json: str):
     """
-    Insère une nouvelle recette pour cet utilisateur.
+    Insère une nouvelle recette.
     """
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO recipes(user_id, name, image_url, ingredients, instructions, extras_json) VALUES(?, ?, ?, ?, ?, ?)",
+        "INSERT INTO recipes(user_id, name, image_url, ingredients, instructions, extras_json) "
+        "VALUES(?, ?, ?, ?, ?, ?)",
         (user_id, name, image_url, ingredients_json, instructions, extras_json)
     )
     conn.commit()
@@ -416,7 +416,7 @@ def update_recipe(recipe_id: int, name: str, image_url: str, ingredients_json: s
 
 def delete_recipe(recipe_id: int):
     """
-    Supprime la recette dont l’ID est recipe_id.
+    Supprime une recette en base.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -426,8 +426,8 @@ def delete_recipe(recipe_id: int):
 
 def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
     """
-    Récupère le planning de l’utilisateur sous forme de DataFrame.
-    Colonnes : ['id', 'day', 'meal', 'recipe_name', 'timestamp']
+    Récupère le planning sous forme de DataFrame.
+    Colonnes : ['id','day','meal','recipe_name','timestamp'].
     """
     conn = get_connection()
     try:
@@ -444,7 +444,7 @@ def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
 
 def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
     """
-    Remplace (supprime + réinsère) tout le planning pour cet user_id.
+    Supprime l’ancien planning de l’utilisateur et insère le nouveau.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -462,8 +462,7 @@ def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
 @st.cache_data
 def parse_ingredients(ing_str: str) -> list:
     """
-    Convertit la chaîne JSON enregistrée dans 'ingredients'
-    en liste de dicts : {"ingredient", "quantity", "unit"}.
+    Convertit la chaîne JSON enregistrée dans 'ingredients' en liste de dicts.
     """
     try:
         return json.loads(ing_str)
@@ -473,8 +472,7 @@ def parse_ingredients(ing_str: str) -> list:
 @st.cache_data
 def parse_extras(extras_str: str) -> list:
     """
-    Convertit la chaîne JSON de 'extras_json' en liste de dicts :
-    {"category", "item", "quantity", "unit"}.
+    Convertit la chaîne JSON de 'extras_json' en liste de dicts.
     """
     try:
         return json.loads(extras_str)
@@ -482,33 +480,37 @@ def parse_extras(extras_str: str) -> list:
         return []
 
 
-# On initialise la base _avant tout appel_ à get_mealplan_for_user() ou get_recipes_for_user()
+# -------------------------------------------------------------------------------
+# ON DÉMARRE EN INITIALLISANT LA BASE (tables + colonnes)
+# -------------------------------------------------------------------------------
 init_db()
 
 
 # -------------------------------------------------------------------------------
-# 4) AUTHENTIFICATION + ONBOARDING : 
-#    - Connexion / Inscription 
-#    - Onboarding étape 1 et 2 
+# 4) AUTHENTIFICATION + ONBOARDING (une seule fois) + CONTENU PRINCIPAL
 # -------------------------------------------------------------------------------
 
-# Initialisation des clés de session
+# --- Initialisation des clés de session ---
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "username" not in st.session_state:
     st.session_state.username = ""
 if "onboard_step" not in st.session_state:
-    st.session_state.onboard_step = 0   # 0 = non connecté, 1 = choisir foyer, 2 = nombre repas, 3 = onboardé
+    # 0 = avant connexion, 1 = choisir foyer, 2 = nombre repas/jour, 3 = prêt pour le contenu principal
+    st.session_state.onboard_step = 0
 if "household_type" not in st.session_state:
     st.session_state.household_type = None
 if "meals_per_day" not in st.session_state:
     st.session_state.meals_per_day = None
 
-def show_login_page() -> bool:
+
+def show_login_page() -> None:
     """
-    Affiche le formulaire de login/inscription. 
-    Renvoie True si connexion réussie (on quitte alors le bloc login),
-    sinon False (on reste sur la page de login).
+    Affiche le formulaire de connexion/inscription.
+    Si l’utilisateur se connecte avec succès, on définit st.session_state.user_id 
+    et on met à jour onboard_step selon le profil existant, puis on stoppe l’exécution 
+    pour laisser le code remonter à la partie Onboarding ou Contenu principal 
+    (sans faire de experimental_rerun ici).
     """
     st.subheader("🔒 Connexion / Inscription")
     tab1, tab2 = st.tabs(["🔐 Connexion", "✍️ Inscription"])
@@ -531,17 +533,20 @@ def show_login_page() -> bool:
             if login_submit:
                 uid = verify_user(login_user.strip(), login_pwd)
                 if uid:
+                    # Connexion OK
                     st.session_state.user_id = uid
                     st.session_state.username = login_user.strip()
                     st.success(f"✅ Bienvenue, **{login_user.strip()}** !")
-                    # On regarde si l’utilisateur a déjà son profil rempli
+
+                    # On regarde s'il a déjà un profil complet
                     profil = get_user_profile(uid)
                     if not profil.get("household_type") or not profil.get("meals_per_day"):
                         st.session_state.onboard_step = 1
                     else:
                         st.session_state.onboard_step = 3
-                    # On force un rerun pour que la suite (onboarding ou contenu principal) s’affiche seul
-                    st.experimental_rerun()
+
+                    # On stoppe ici pour passer à l’étape d’onboarding ou au contenu
+                    return
                 else:
                     st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
@@ -577,26 +582,22 @@ def show_login_page() -> bool:
                         st.success("✅ Compte créé. Vous pouvez maintenant vous connecter.")
                     else:
                         st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà.")
-    return False
 
-# Si l’utilisateur n’est pas connecté, on affiche le login, puis on stoppe l’exécution là
+
+# Si l’utilisateur n’est pas connecté, on affiche le login/inscription, puis on arrête.
 if st.session_state.user_id is None:
     show_login_page()
     st.stop()
 
 
-# -------------------------------------------------------------------------------
-# 4.1) ONBOARDING
-#     1 → Choix Solo / Couple / Famille
-#     2 → Nombre de repas / jour
-#     3 → (onboard_step=3) on passe au contenu principal
-# -------------------------------------------------------------------------------
+# À partir d’ici, st.session_state.user_id est défini (login réussi).
+# On vérifie le paramètre onboard_step pour savoir si l’on affiche l’onboarding ou le contenu.
 
-# Étape 1 : choisir le foyer
+# --- Étape 1 : Choisir le foyer (une seule fois, à la toute première connexion) ---
 if st.session_state.onboard_step == 1:
     st.markdown("---")
     st.header("🏠 Comment vivez-vous ?")
-    st.write("Sélectionnez votre type de foyer :")
+    st.write("Sélectionnez votre type de foyer pour continuer :")
     col1, col2, col3 = st.columns(3, gap="large")
     with col1:
         if st.button("Solo", key="btn_solo", use_container_width=True):
@@ -615,19 +616,19 @@ if st.session_state.onboard_step == 1:
             st.experimental_rerun()
     st.stop()
 
-# Étape 2 : choisir le nombre de repas par jour
+# --- Étape 2 : Nombre de repas / jour (une seule fois, juste après le choix du foyer) ---
 elif st.session_state.onboard_step == 2:
     st.markdown("---")
     st.header("🍽️ Combien de repas par jour préparez-vous ?")
     meals_input = st.number_input(
-        "Nombre de repas / jour :",
-        min_value=1, max_value=10, step=1,
+        "Nombre de repas / jour :", 
+        min_value=1, max_value=10, step=1, 
         value=3, key="meals_input"
     )
     if st.button("Valider", key="btn_set_meals", use_container_width=True):
         st.session_state.meals_per_day = meals_input
 
-        # Par défaut, on attribue la composition d’adultes/enfants selon le type de foyer
+        # On remplit automatiquement la composition adulte/ados/enfants
         if st.session_state.household_type == "Solo":
             num_adults = 1; num_adolescents = 0; num_children = 0
         elif st.session_state.household_type == "Couple":
@@ -635,6 +636,7 @@ elif st.session_state.onboard_step == 2:
         else:  # Famille
             num_adults = 2; num_adolescents = 0; num_children = 0
 
+        # On enregistre tout ça en base
         update_user_profile(
             st.session_state.user_id,
             {
@@ -645,12 +647,17 @@ elif st.session_state.onboard_step == 2:
                 "num_adults": num_adults
             }
         )
+        # On passe à l’étape “contenu principal” et on rerun pour appliquer
         st.session_state.onboard_step = 3
         st.experimental_rerun()
 
     st.stop()
 
-# À ce stade, on a un utilisateur connecté ET onboardé (onboard_step >= 3)
+# À ce stade, on a fait la **toute première** connexion + onboarding, 
+# ou bien l’utilisateur était déjà onboardé (household_type + meals_per_day remplis).
+# st.session_state.onboard_step est donc >= 3 ==> on affiche le contenu principal.
+
+
 # -------------------------------------------------------------------------------
 # 5) UTILISATEUR CONNECTÉ & ONBOARDÉ : CONTENU PRINCIPAL
 # -------------------------------------------------------------------------------
@@ -662,9 +669,10 @@ with st.sidebar:
     st.markdown("---")
     st.write(f"👤 **Utilisateur : {st.session_state.username}**")
     profil = get_user_profile(USER_ID)
-    st.write(f"🏠 Foyer : {profil.get('household_type','–')}")
-    st.write(f"🍽️ Repas/jour : {profil.get('meals_per_day','–')}")
+    st.write(f"🏠 Foyer : {profil.get('household_type', '–')}")
+    st.write(f"🍽️ Repas/jour : {profil.get('meals_per_day', '–')}")
     if st.button("🔓 Se déconnecter", use_container_width=True):
+        # On efface toutes les clés de session et on rerun pour retourner à la page login
         for key in ["user_id", "username", "onboard_step", "household_type", "meals_per_day"]:
             if key in st.session_state:
                 del st.session_state[key]
@@ -699,7 +707,6 @@ if section == "Accueil":
     if df_plan.empty:
         st.info("Vous n’avez pas encore planifié de repas.")
     else:
-        # Filtrer sur le dernier mois
         now = datetime.now()
         one_month_ago = now - timedelta(days=30)
         df_plan["timestamp"] = pd.to_datetime(df_plan["timestamp"])
@@ -739,10 +746,8 @@ elif section == "Mes recettes":
     st.header("📋 Mes recettes")
     st.markdown("Ajoutez, consultez, modifiez ou supprimez vos recettes personnelles.")
 
-    # Récupérer profil si besoin
     profil = get_user_profile(USER_ID)
 
-    # 6.1 – Formulaire d’ajout / édition de recette
     with st.expander("➕ Ajouter / Modifier une recette", expanded=True):
         df_recettes = get_recipes_for_user(USER_ID)
         all_names = df_recettes["name"].tolist()
@@ -776,7 +781,7 @@ elif section == "Mes recettes":
         st.markdown("**Ingrédients**")
         ing_mode = st.radio("Mode d’ajout des ingrédients", ("Saisie manuelle", "Importer depuis texte"), index=0, horizontal=True)
 
-        # Réinitialiser ing_count si on change de recette
+        # Réinit de ing_count si on change de recette
         if "ing_count" not in st.session_state or recipe_id is not None:
             st.session_state.ing_count = len(default_ing) if default_ing else 1
 
