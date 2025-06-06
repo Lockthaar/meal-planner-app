@@ -1,6 +1,5 @@
 # app.py
 
-import os
 import sqlite3
 import streamlit as st
 import pandas as pd
@@ -11,82 +10,67 @@ import io
 from datetime import datetime, timedelta
 
 # -------------------------------------------------------------------------------
-# 1) DÉLETION OPTIONNELLE D'UNE ANCIENNE BASE (POUR DEBUG)
-# -------------------------------------------------------------------------------
-# Si vous rencontrez toujours une erreur "no such table: users", supprimez le fichier meal_planner.db existant
-# en décommentant la ligne suivante (ou faites-le manuellement à la racine de votre projet) :
-
-# if os.path.exists("meal_planner.db"):
-#     os.remove("meal_planner.db")
-
-# -------------------------------------------------------------------------------
-# 2) DÉFINITION DU CHEMIN DE LA BASE ET DES FONCTIONS D’INIT / CONNEXION
+# 1) ON FORCE LA SUPPRESSION DES ANCIENNES TABLES (DROP IF EXISTS)
+#    -->
+#    POUR REPARTIR SUR UN SCHÉMA PROPRE À CHAQUE DÉMARRAGE.
+#    Cela supprimera aussi tous les comptes/recettes existants lors du dev.
 # -------------------------------------------------------------------------------
 DB_PATH = "meal_planner.db"
 
 def get_connection():
     """
-    Ouvre une connexion vers le fichier SQLite meal_planner.db
+    Ouvre ou crée le fichier SQLite meal_planner.db
     """
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     return conn
 
 def init_db():
     """
-    1) Crée les tables users, recipes, mealplans si elles n’existent pas.
-    2) Ajoute les colonnes manquantes (profil, image_url, extras_json) le cas échéant.
+    1) Supprime (DROP) les anciennes tables si elles existent
+    2) Recrée les tables users, recipes, mealplans avec le bon schéma
     """
     conn = get_connection()
     cursor = conn.cursor()
 
-    # 2.1) Table users
+    # 1.1) DROP des tables “users”, “recipes” et “mealplans” (s'il existe)
+    cursor.execute("DROP TABLE IF EXISTS users")
+    cursor.execute("DROP TABLE IF EXISTS recipes")
+    cursor.execute("DROP TABLE IF EXISTS mealplans")
+    conn.commit()
+
+    # 1.2) CREATE TABLE users avec username + password + colonnes profil vides
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL
+            password TEXT NOT NULL,
+            household_type TEXT,
+            meals_per_day INTEGER,
+            num_children INTEGER,
+            num_adolescents INTEGER,
+            num_adults INTEGER
         )
     """)
     conn.commit()
 
-    # Vérifier/ajouter colonnes profil si manquantes
-    cursor.execute("PRAGMA table_info(users)")
-    cols_users = [col[1] for col in cursor.fetchall()]
-    if "household_type" not in cols_users:
-        cursor.execute("ALTER TABLE users ADD COLUMN household_type TEXT")
-    if "meals_per_day" not in cols_users:
-        cursor.execute("ALTER TABLE users ADD COLUMN meals_per_day INTEGER")
-    if "num_children" not in cols_users:
-        cursor.execute("ALTER TABLE users ADD COLUMN num_children INTEGER")
-    if "num_adolescents" not in cols_users:
-        cursor.execute("ALTER TABLE users ADD COLUMN num_adolescents INTEGER")
-    if "num_adults" not in cols_users:
-        cursor.execute("ALTER TABLE users ADD COLUMN num_adults INTEGER")
-    conn.commit()
-
-    # 2.2) Table recipes
+    # 1.3) CREATE TABLE recipes
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS recipes (
+        CREATE TABLE recipes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
             ingredients TEXT NOT NULL,
             instructions TEXT,
+            image_url TEXT,
+            extras_json TEXT,
             FOREIGN KEY(user_id) REFERENCES users(id)
         )
     """)
     conn.commit()
-    cursor.execute("PRAGMA table_info(recipes)")
-    cols_rec = [col[1] for col in cursor.fetchall()]
-    if "image_url" not in cols_rec:
-        cursor.execute("ALTER TABLE recipes ADD COLUMN image_url TEXT")
-    if "extras_json" not in cols_rec:
-        cursor.execute("ALTER TABLE recipes ADD COLUMN extras_json TEXT")
-    conn.commit()
 
-    # 2.3) Table mealplans
+    # 1.4) CREATE TABLE mealplans
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS mealplans (
+        CREATE TABLE mealplans (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             day TEXT NOT NULL,
@@ -99,14 +83,13 @@ def init_db():
     conn.commit()
 
     conn.close()
-    # Afficher un log dans la console pour vérifier que l'init est passée
-    print("✅ init_db() exécuté – tables (users, recipes, mealplans) OK")
+    print("✅ init_db() exécuté : tables recréées de zéro.")
 
-# APPEL IMMÉDIAT À init_db(), avant toute logique Streamlit
+# On appelle init_db() impérativement dès que l’app démarre, avant toute logique Streamlit
 init_db()
 
 # -------------------------------------------------------------------------------
-# 3) FONCTIONS DE GESTION DES DONNÉES (CRUD)
+# 2) FONCTIONS CRUD (Users, Recipes, Mealplans)
 # -------------------------------------------------------------------------------
 def add_user(username: str, password: str) -> bool:
     """
@@ -124,7 +107,7 @@ def add_user(username: str, password: str) -> bool:
         conn.close()
         return True
     except sqlite3.IntegrityError:
-        # Username déjà existant : UNIQUE contraint
+        # username en double (contraint UNIQUE)
         return False
     except sqlite3.OperationalError as e:
         st.error(f"⚠️ SQLite error dans add_user(): {e}")
@@ -132,9 +115,8 @@ def add_user(username: str, password: str) -> bool:
 
 def verify_user(username: str, password: str) -> Optional[int]:
     """
-    Vérifie que (username,password) existe dans la table users.
-    Si oui, renvoie l’id. Sinon, renvoie None.
-    En cas d’erreur SQLite, affiche st.error(...) et renvoie None.
+    Vérifie que (username, password) existe dans la table users.
+    Si oui, renvoie user_id. Sinon None.
     """
     try:
         conn = get_connection()
@@ -154,14 +136,14 @@ def verify_user(username: str, password: str) -> Optional[int]:
 
 def get_user_profile(user_id: int) -> dict:
     """
-    Retourne le profil (household_type, meals_per_day, num_children, num_adolescents, num_adults) de l’utilisateur.
+    Renvoie le profil (household_type, meals_per_day, num_children, num_adolescents, num_adults).
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT household_type, meals_per_day, num_children, num_adolescents, num_adults FROM users WHERE id = ?",
-        (user_id,)
-    )
+    cursor.execute("""
+        SELECT household_type, meals_per_day, num_children, num_adolescents, num_adults
+        FROM users WHERE id = ?
+    """, (user_id,))
     row = cursor.fetchone()
     conn.close()
     if row:
@@ -176,8 +158,8 @@ def get_user_profile(user_id: int) -> dict:
 
 def update_user_profile(user_id: int, profile: dict):
     """
-    Met à jour le profil dans la table users pour l’id donné.
-    profile doit contenir : household_type, meals_per_day, num_children, num_adolescents, num_adults
+    Met à jour les champs de profil dans la table users.
+    profile doit contenir keys : household_type, meals_per_day, num_children, num_adolescents, num_adults
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -198,8 +180,8 @@ def update_user_profile(user_id: int, profile: dict):
 
 def get_recipes_for_user(user_id: int) -> pd.DataFrame:
     """
-    Renvoie un DataFrame des recettes (id, name, image_url, ingredients, instructions, extras_json)
-    pour l’utilisateur spécifié.
+    Récupère toutes les recettes pour cet user_id sous forme de DataFrame.
+    Colonnes retournées : [id, name, image_url, ingredients, instructions, extras_json]
     """
     conn = get_connection()
     df = pd.read_sql_query(
@@ -213,22 +195,21 @@ def get_recipes_for_user(user_id: int) -> pd.DataFrame:
 def insert_recipe(user_id: int, name: str, image_url: str, ingredients_json: str,
                   instructions: str, extras_json: str):
     """
-    Insère une nouvelle recette pour l’utilisateur user_id.
+    Insère une nouvelle recette pour user_id.
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO recipes(user_id, name, image_url, ingredients, instructions, extras_json) "
-        "VALUES(?, ?, ?, ?, ?, ?)",
-        (user_id, name, image_url, ingredients_json, instructions, extras_json)
-    )
+    cursor.execute("""
+        INSERT INTO recipes(user_id, name, image_url, ingredients, instructions, extras_json)
+        VALUES(?, ?, ?, ?, ?, ?)
+    """, (user_id, name, image_url, ingredients_json, instructions, extras_json))
     conn.commit()
     conn.close()
 
 def update_recipe(recipe_id: int, name: str, image_url: str, ingredients_json: str,
                   instructions: str, extras_json: str):
     """
-    Met à jour une recette existante via son ID.
+    Met à jour une recette existante avec son recipe_id.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -242,7 +223,7 @@ def update_recipe(recipe_id: int, name: str, image_url: str, ingredients_json: s
 
 def delete_recipe(recipe_id: int):
     """
-    Supprime la recette dont l’id est passé en paramètre.
+    Supprime la recette identification recipe_id.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -252,7 +233,7 @@ def delete_recipe(recipe_id: int):
 
 def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
     """
-    Renvoie un DataFrame du planning (id, day, meal, recipe_name, timestamp) pour user_id.
+    Récupère le planning (id, day, meal, recipe_name, timestamp) pour user_id.
     """
     conn = get_connection()
     df = pd.read_sql_query(
@@ -265,8 +246,8 @@ def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
 
 def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
     """
-    Remplace (supprime + réinsère) tout le planning pour user_id.
-    Ajoute un champ timestamp pour chaque ligne.
+    Remplace (DELETE + INSERT) tout le planning pour user_id, 
+    en ajoutant un timestamp (datetime.now()).
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -274,17 +255,18 @@ def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
     conn.commit()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for _, row in plan_df.iterrows():
-        cursor.execute(
-            "INSERT INTO mealplans(user_id, day, meal, recipe_name, timestamp) VALUES(?, ?, ?, ?, ?)",
-            (user_id, row["Day"], row["Meal"], row["Recipe"], now_str)
-        )
+        cursor.execute("""
+            INSERT INTO mealplans(user_id, day, meal, recipe_name, timestamp)
+            VALUES(?, ?, ?, ?, ?)
+        """, (user_id, row["Day"], row["Meal"], row["Recipe"], now_str))
     conn.commit()
     conn.close()
 
 @st.cache_data
 def parse_ingredients(ing_str: str) -> list:
     """
-    Convertit la chaîne JSON stockée sous 'ingredients' en liste de dicts.
+    Convertit la chaîne JSON stockée sous 'ingredients' 
+    en liste de dicts {"ingredient","quantity","unit"}.
     """
     try:
         return json.loads(ing_str)
@@ -294,7 +276,8 @@ def parse_ingredients(ing_str: str) -> list:
 @st.cache_data
 def parse_extras(extras_str: str) -> list:
     """
-    Convertit la chaîne JSON stockée sous 'extras_json' en liste de dicts.
+    Convertit la chaîne JSON stockée sous 'extras_json' 
+    en liste de dicts {"category","item","quantity","unit"}.
     """
     try:
         return json.loads(extras_str)
@@ -302,72 +285,113 @@ def parse_extras(extras_str: str) -> list:
         return []
 
 # -------------------------------------------------------------------------------
-# 4) CSS GLOBAL POUR NAVBAR + HERO + MODALES
+# 3) CSS GLOBAL: NAVBAR FIXE + HERO + MODALES
 # -------------------------------------------------------------------------------
 st.set_page_config(
     page_title="Batchist: Meal Planner & Batch Cooking",
     page_icon="🥘",
-    layout="wide",
+    layout="wide"
 )
 st.markdown(
     """
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
-        * { font-family: 'Poppins', sans-serif !important; }
+        * {
+            font-family: 'Poppins', sans-serif !important;
+        }
         #MainMenu { visibility: hidden; }
         footer { visibility: hidden; }
 
+        /* NAVBAR FIXE EN HAUT */
         .header {
-            position: fixed; top: 0; left: 0; width: 100%;
-            background: #ffffffcc; backdrop-filter: blur(10px);
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1); z-index: 1000;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            background: #ffffffcc;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            z-index: 1000;
         }
         .header-content {
-            max-width: 1200px; margin: 0 auto; padding: 10px 20px;
-            display: flex; align-items: center; justify-content: space-between;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
         .header-logo img { width: 40px; height: 40px; }
-        .nav-item { margin-left: 20px; font-weight: 500; cursor: pointer; color: #333; }
+        .nav-item {
+            margin-left: 20px;
+            font-weight: 500;
+            cursor: pointer;
+            color: #333;
+        }
         .nav-item:hover { color: #FFA500; }
 
+        /* POUR EVITER QUE LE CONTENU NE SOIT CACHÉ PAR LA NAVBAR */
         .streamlit-container { padding-top: 100px !important; }
 
+        /* HERO */
         .hero {
-            position: relative; width: 100%; height: 300px;
+            position: relative;
+            width: 100%;
+            height: 300px;
             background: url('https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1200&q=80') no-repeat center center / cover;
-            margin-bottom: 40px; color: white;
+            margin-bottom: 40px;
+            color: white;
         }
         .hero-overlay {
-            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.4);
         }
         .hero-text {
-            position: relative; z-index: 1;
-            text-align: center; top: 50%; transform: translateY(-50%);
+            position: relative;
+            z-index: 1;
+            text-align: center;
+            top: 50%;
+            transform: translateY(-50%);
         }
         .hero-text h1 { font-size: 3rem; margin-bottom: 10px; }
         .hero-text p { font-size: 1.2rem; opacity: 0.9; }
 
-        /* MODAL */
+        /* MODALE (POP-UPS) */
         .modal-background {
-            position: fixed; top: 0; left: 0;
+            position: fixed;
+            top: 0; left: 0;
             width: 100%; height: 100%;
-            background-color: rgba(0,0,0,0.5); z-index: 1001;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 1001;
         }
         .modal-content {
-            position: fixed; top: 50%; left: 50%;
+            position: fixed;
+            top: 50%; left: 50%;
             transform: translate(-50%, -50%);
-            background: white; padding: 30px; border-radius: 8px;
-            max-width: 450px; width: 90%; 
-            box-shadow: 0 4px 20px rgba(0,0,0,0.2); z-index: 1002;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 450px;
+            width: 90%;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            z-index: 1002;
         }
         .modal-title {
-            font-size: 1.3rem; font-weight: 700; margin-bottom: 20px;
-            color: #333; text-align: center;
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: #333;
+            text-align: center;
         }
         .modal-close {
-            position: absolute; top: 10px; right: 15px;
-            font-size: 1.2rem; font-weight: 700; color: #666; cursor: pointer;
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #666;
+            cursor: pointer;
         }
         .modal-close:hover { color: #333; }
     </style>
@@ -376,9 +400,8 @@ st.markdown(
 )
 
 # -------------------------------------------------------------------------------
-# 5) NAVBAR + HERO (HTML/CSS)
+# 4) NAVBAR + HERO (HTML)
 # -------------------------------------------------------------------------------
-# NAVBAR
 st.markdown(
     """
     <div class="header">
@@ -401,7 +424,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# HERO
 st.markdown(
     """
     <div id="home" class="hero">
@@ -416,14 +438,14 @@ st.markdown(
 )
 
 # -------------------------------------------------------------------------------
-# 6) AUTHENTIFICATION + ONBOARDING
+# 5) AUTHENTIFICATION + ONBOARDING
 # -------------------------------------------------------------------------------
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "username" not in st.session_state:
     st.session_state.username = ""
 if "onboard_step" not in st.session_state:
-    st.session_state.onboard_step = 0  # 0 : non connecté, 1 : onboarding foyer, 2 : onboarding repas, 3 : onboardé
+    st.session_state.onboard_step = 0  # 0 = non connecté, 1 = onboarding foyer, 2 = onboarding repas, 3 = onboardé
 if "household_type" not in st.session_state:
     st.session_state.household_type = None
 if "meals_per_day" not in st.session_state:
@@ -431,12 +453,13 @@ if "meals_per_day" not in st.session_state:
 
 def show_login_page():
     """
-    Formulaire Connexion / Inscription, chacun dans un st.form pour capturer le submit-button.
+    Formulaire Connexion / Inscription avec st.form, 
+    pour qu’un seul clic “Se connecter” exécute verify_user()
     """
     st.subheader("🔒 Connexion / Inscription")
     tab1, tab2 = st.tabs(["🔐 Connexion", "✍️ Inscription"])
 
-    # ---------- Onglet Connexion ----------
+    # Onglet Connexion
     with tab1:
         st.write("Connectez-vous pour accéder à Batchist.")
         with st.form(key="login_form"):
@@ -458,7 +481,7 @@ def show_login_page():
                 else:
                     st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
-    # ---------- Onglet Inscription ----------
+    # Onglet Inscription
     with tab2:
         st.write("Créez votre compte pour commencer.")
         with st.form(key="register_form"):
@@ -478,13 +501,13 @@ def show_login_page():
                     else:
                         st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà ou erreur SQLite.")
 
-# Tant que user_id est None, on affiche la page login et on stoppe (aucune autre requête n’est lancée)
+# Tant que user_id == None → on affiche le login/inscription → st.stop()
 if st.session_state.user_id is None:
     show_login_page()
     st.stop()
 
 # -------------------------------------------------------------------------------
-# 6.1) ONBOARDING POP-UPS (étapes 1 & 2)
+# 5.1) ONBOARDING : étapes 1 & 2
 # -------------------------------------------------------------------------------
 if st.session_state.onboard_step == 1:
     # Pop-up “Comment vivez-vous ?”
@@ -498,7 +521,6 @@ if st.session_state.onboard_step == 1:
         """,
         unsafe_allow_html=True,
     )
-    # JS pour injecter closeOnboarding dans l’URL puis reload
     st.markdown(
         """
         <script>
@@ -545,7 +567,6 @@ if st.session_state.onboard_step == 1:
             unsafe_allow_html=True
         )
 
-    # Si l’utilisateur clique sur la croix (closeOnboarding=1), on passe à l’appli
     if st.experimental_get_query_params().get("closeOnboarding"):
         st.session_state.onboard_step = 3
         st.experimental_set_query_params()
@@ -612,7 +633,7 @@ if st.session_state.onboard_step == 2:
     st.stop()
 
 # -------------------------------------------------------------------------------
-# 7) UTILISATEUR CONNECTÉ & ONBOARDÉ : AFFICHAGE DU CONTENU PRINCIPAL
+# 6) UTILISATEUR CONNECTÉ & ONBOARDÉ: AFFICHAGE DU CONTENU PRINCIPAL
 # -------------------------------------------------------------------------------
 USER_ID = st.session_state.user_id
 
@@ -643,7 +664,7 @@ with st.sidebar:
     )
 
 # -------------------------------------------------------------------------------
-# 8) LAYOUT PAR SECTION
+# 7) LAYOUT PAR SECTION
 # -------------------------------------------------------------------------------
 # — Accueil (Dashboard)
 if section == "Accueil":
@@ -742,7 +763,12 @@ elif section == "Mes recettes":
                 with c2:
                     qt = st.number_input(f"Quantité #{i+1}", min_value=0.0, format="%.2f", key=f"ing_qty_{i}", value=qty_i)
                 with c3:
-                    un = st.selectbox(f"Unité #{i+1}", ["mg","g","kg","cl","dl","l","pièce(s)"], key=f"ing_unit_{i}", index=["mg","g","kg","cl","dl","l","pièce(s)"].index(unit_i) if unit_i in ["mg","g","kg","cl","dl","l","pièce(s)"] else 1)
+                    un = st.selectbox(
+                        f"Unité #{i+1}",
+                        ["mg","g","kg","cl","dl","l","pièce(s)"],
+                        key=f"ing_unit_{i}",
+                        index=["mg","g","kg","cl","dl","l","pièce(s)"].index(unit_i) if unit_i in ["mg","g","kg","cl","dl","l","pièce(s)"] else 1
+                    )
                 ingrédients_list.append((nm, qt, un))
 
         else:
@@ -786,7 +812,7 @@ elif section == "Mes recettes":
             with dcol1:
                 category = st.selectbox(
                     f"Catégorie #{j+1}",
-                    ["Boissons", "Maison", "Plantes", "Animaux"],
+                    ["Boissons","Maison","Plantes","Animaux"],
                     key=f"extra_cat_{j}",
                     index=["Boissons","Maison","Plantes","Animaux"].index(cat_default) if cat_default in ["Boissons","Maison","Plantes","Animaux"] else 0
                 )
@@ -795,7 +821,12 @@ elif section == "Mes recettes":
             with dcol3:
                 qty_extra = st.number_input(f"Quantité #{j+1}", min_value=0.0, format="%.2f", key=f"extra_qty_{j}", value=qty_extra_default)
             with dcol4:
-                unit_extra = st.selectbox(f"Unité #{j+1}", ["mg","g","kg","cl","dl","l","pièce(s)"], key=f"extra_unit_{j}", index=["mg","g","kg","cl","dl","l","pièce(s)"].index(unit_extra_default) if unit_extra_default in ["mg","g","kg","cl","dl","l","pièce(s)"] else 1)
+                unit_extra = st.selectbox(
+                    f"Unité #{j+1}",
+                    ["mg","g","kg","cl","dl","l","pièce(s)"],
+                    key=f"extra_unit_{j}",
+                    index=["mg","g","kg","cl","dl","l","pièce(s)"].index(unit_extra_default) if unit_extra_default in ["mg","g","kg","cl","dl","l","pièce(s)"] else 1
+                )
             extras_list.append({
                 "category": category,
                 "item": item,
@@ -821,14 +852,14 @@ elif section == "Mes recettes":
                     insert_recipe(USER_ID, name.strip(), image_url.strip(), ing_json, instructions.strip(), extras_json)
                     st.success(f"✅ Recette « {name.strip()} » ajoutée.")
                 # Réinitialiser le formulaire
-                for key in ["new_name", "new_image_url", "new_instructions", "ing_count", "extra_count", "import_ing_text"]:
+                for key in ["new_name","new_image_url","new_instructions","ing_count","extra_count","import_ing_text"]:
                     if key in st.session_state:
                         del st.session_state[key]
                 st.experimental_rerun()
 
     st.markdown("---")
 
-    # Affichage des recettes en cards
+    # Affichage des cartes recettes
     df_recettes = get_recipes_for_user(USER_ID)
     if df_recettes.empty:
         st.info("Vous n’avez (encore) aucune recette enregistrée.")
@@ -874,8 +905,8 @@ elif section == "Planificateur":
     df_recettes = get_recipes_for_user(USER_ID)
     choix_recettes = [""] + df_recettes["name"].tolist()
 
-    days = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-    meals = ["Petit-déjeuner", "Déjeuner", "Dîner"]
+    days = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"]
+    meals = ["Petit-déjeuner","Déjeuner","Dîner"]
 
     with st.form(key="plan_form", clear_on_submit=False):
         cols = st.columns(3)
@@ -893,7 +924,7 @@ elif section == "Planificateur":
                     selections.append((day, meal, recipe_choice))
 
         if st.form_submit_button("💾 Enregistrer le planning", use_container_width=True):
-            df_plan = pd.DataFrame(selections, columns=["Day", "Meal", "Recipe"])
+            df_plan = pd.DataFrame(selections, columns=["Day","Meal","Recipe"])
             df_plan = df_plan[df_plan["Recipe"] != ""].reset_index(drop=True)
             upsert_mealplan(USER_ID, df_plan)
             st.success("✅ Planning de la semaine enregistré.")
@@ -906,8 +937,8 @@ elif section == "Planificateur":
         st.info("Vous n’avez pas encore de planning.")
     else:
         st.table(
-            df_current_plan[["day", "meal", "recipe_name"]].rename(
-                columns={"day": "Jour", "meal": "Repas", "recipe_name": "Recette"}
+            df_current_plan[["day","meal","recipe_name"]].rename(
+                columns={"day":"Jour","meal":"Repas","recipe_name":"Recette"}
             )
         )
 
@@ -977,10 +1008,10 @@ elif section == "Conseils & Astuces":
     6. **Variez les assaisonnements** :  
        Préparez une base de protéines (poulet, tofu, œufs) et assaisonnez-la différemment chaque jour (curry, teriyaki, épices mexicaines).  
     7. **Surveillez les dates de péremption** :  
-       Utilisez un auto-collant pour indiquer la date de préparation.  
+       Utilisez un autocollant pour indiquer la date de préparation.  
     8. **Impliquer toute la famille** :  
        Si vous cuisinez pour une famille, attribuez des tâches simples aux enfants (mélanger, laver les légumes), cela rend l’activité ludique.  
-    9. **Réinventez vos restes** :  
+    9. **Réinventez vos restes ** :  
        Transformez les restes du dîner en lunch box le lendemain (salades composées, wraps, omelettes).  
     10. **Nettoyage au fur et à mesure** :  
        Pendant que les ingrédients cuisent, profitez des temps de pause pour nettoyer les surfaces et ustensiles utilisés.  
@@ -1004,7 +1035,7 @@ else:  # section == "Profil"
     st.subheader("Type de foyer")
     household = st.selectbox(
         "Vous êtes :",
-        options=["Solo", "Couple", "Famille"],
+        options=["Solo","Couple","Famille"],
         index=["Solo","Couple","Famille"].index(household_default) if household_default in ["Solo","Couple","Famille"] else 0
     )
 
