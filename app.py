@@ -8,300 +8,18 @@ from collections import defaultdict
 from typing import Optional
 import io
 from datetime import datetime, timedelta
+import time
 
 # -------------------------------------------------------------------------------
-# 1) CONFIGURATION GLOBALE : page config, polices, CSS “global” pour navbar + cards
-# -------------------------------------------------------------------------------
-st.set_page_config(
-    page_title="Batchist: Meal Planner & Batch Cooking",
-    page_icon="🥘",
-    layout="wide",
-)
-
-# CSS global: Google Font, masquer menu Streamlit, navbar fixe, hero, cards, modals
-st.markdown(
-    """
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <style>
-        * {
-            font-family: 'Poppins', sans-serif !important;
-        }
-        /* Masquer menu hamburger et footer Streamlit */
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-
-        /* NAVBAR FIXE EN HAUT */
-        .header {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            background: #ffffffcc;
-            backdrop-filter: blur(10px);
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            z-index: 1000;
-        }
-        .header-content {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 10px 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-        .header-logo {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .header-logo img {
-            width: 40px;
-            height: 40px;
-        }
-        .nav-item {
-            margin-left: 20px;
-            font-weight: 500;
-            cursor: pointer;
-            color: #333;
-        }
-        .nav-item:hover {
-            color: #FFA500;
-        }
-
-        /* Ajuste padding pour que contenu ne soit pas caché derrière navbar */
-        .streamlit-container {
-            padding-top: 100px !important;
-        }
-
-        /* HERO SECTION */
-        .hero {
-            position: relative;
-            width: 100%;
-            height: 300px;
-            background: url('https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1200&q=80') no-repeat center center / cover;
-            margin-bottom: 40px;
-            color: white;
-        }
-        .hero-overlay {
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.4);
-        }
-        .hero-text {
-            position: relative;
-            z-index: 1;
-            text-align: center;
-            top: 50%;
-            transform: translateY(-50%);
-        }
-        .hero-text h1 {
-            font-size: 3rem;
-            margin-bottom: 10px;
-        }
-        .hero-text p {
-            font-size: 1.2rem;
-            opacity: 0.9;
-        }
-
-        /* CARDS POUR LES RECETTES & FAVORITES */
-        .recipe-card, .favorite-card {
-            border: 1px solid #eee;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-            transition: transform 0.2s, box-shadow 0.2s;
-            background: white;
-            margin-bottom: 20px;
-        }
-        .recipe-card:hover, .favorite-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
-        .recipe-card img, .favorite-card img {
-            width: 100%;
-            height: 160px;
-            object-fit: cover;
-        }
-        .recipe-card-body, .favorite-card-body {
-            padding: 15px;
-        }
-        .recipe-card-title, .favorite-card-title {
-            font-size: 1.2rem;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: #333;
-        }
-        .recipe-card-buttons button, .favorite-card-buttons button {
-            background: #FFA500;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 6px 12px;
-            cursor: pointer;
-            font-size: 0.9rem;
-        }
-        .recipe-card-buttons button:hover, .favorite-card-buttons button:hover {
-            background: #ff9800;
-        }
-
-        /* STYLE DES EXPANDERS */
-        .streamlit-expanderHeader {
-            font-size: 1.1rem !important;
-            font-weight: 600 !important;
-        }
-        .css-1outpf7 {
-            border: 1px solid #ddd !important;
-            border-radius: 8px !important;
-            box-shadow: 1px 1px 3px rgba(0,0,0,0.05) !important;
-            margin-bottom: 10px !important;
-        }
-
-        /* MODAL SIMULATION (POP-UPS) */
-        .modal-background {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background-color: rgba(0,0,0,0.5);
-            z-index: 1001;
-        }
-        .modal-content {
-            position: fixed;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            max-width: 450px;
-            width: 90%;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-            z-index: 1002;
-        }
-        .modal-title {
-            font-size: 1.3rem;
-            font-weight: 700;
-            margin-bottom: 20px;
-            color: #333;
-            text-align: center;
-        }
-        .modal-close {
-            position: absolute;
-            top: 10px;
-            right: 15px;
-            font-size: 1.2rem;
-            font-weight: 700;
-            color: #666;
-            cursor: pointer;
-        }
-        .modal-close:hover {
-            color: #333;
-        }
-        .modal-options {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 20px;
-        }
-        .modal-option {
-            flex: 1;
-            text-align: center;
-            margin: 5px;
-            padding: 15px;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: transform 0.1s, box-shadow 0.1s;
-            background: #fafafa;
-        }
-        .modal-option:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-        .modal-option img {
-            width: 60px;
-            height: 60px;
-            margin-bottom: 10px;
-        }
-        .modal-button {
-            background: #FFA500;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 8px 20px;
-            cursor: pointer;
-            font-size: 1rem;
-            display: block;
-            margin: 20px auto 0;
-        }
-        .modal-button:hover {
-            background: #ff9800;
-        }
-
-        /* SMALL SCREEN ADJUST */
-        @media (max-width: 768px) {
-            .hero h1 {
-                font-size: 2rem !important;
-            }
-            .hero p {
-                font-size: 1rem !important;
-            }
-            .modal-options {
-                flex-direction: column;
-            }
-            .modal-option {
-                margin-bottom: 10px;
-            }
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# -------------------------------------------------------------------------------
-# 2) STRUCTURE DE LA PAGE : NAVBAR + HERO
+# 1) DÉFINITION ET INITIALISATION DE LA BASE DE DONNÉES
+#    On s’assure qu'init_db() est bel et bien executé en PREMIER lieu,
+#    avant tout affichage ou logique de la page.
 # -------------------------------------------------------------------------------
 
-# 2.1) NAVBAR FIXE
-st.markdown(
-    """
-    <div class="header">
-      <div class="header-content">
-        <div class="header-logo">
-          <img src="https://img.icons8.com/fluency/48/000000/cutlery.png" alt="logo">
-          <span style="font-size:1.5rem; font-weight:700; color:#333;">Batchist</span>
-        </div>
-        <div>
-          <span class="nav-item" onclick="window.location.hash='#home'">Accueil</span>
-          <span class="nav-item" onclick="window.location.hash='#recipes'">Recettes</span>
-          <span class="nav-item" onclick="window.location.hash='#planner'">Planificateur</span>
-          <span class="nav-item" onclick="window.location.hash='#shopping'">Liste de courses</span>
-          <span class="nav-item" onclick="window.location.hash='#tips'">Conseils</span>
-          <span class="nav-item" onclick="window.location.hash='#profile'">Profil</span>
-        </div>
-      </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# 2.2) HERO SECTION
-st.markdown(
-    """
-    <div id="home" class="hero">
-      <div class="hero-overlay"></div>
-      <div class="hero-text">
-        <h1>Batchist</h1>
-        <p>Vos recettes personnelles, votre batch cooking simplifié.</p>
-      </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# -------------------------------------------------------------------------------
-# 3) BASE DE DONNÉES SQLITE (COMPTES, RECETTES, PLANNINGS, PROFIL) – avec ALTER
-# -------------------------------------------------------------------------------
 DB_PATH = "meal_planner.db"
 
 def get_connection():
+    # Crée ou ouvre le fichier SQLite situé dans le dossier courant.
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     return conn
 
@@ -313,7 +31,7 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Table users : id, username, password, household_type, meals_per_day, num_children, num_adolescents, num_adults
+    # 1.1) Table users
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -322,7 +40,8 @@ def init_db():
     )
     """)
     conn.commit()
-    # Ajouter colonnes de profil si manquantes
+
+    # Vérifier si les colonnes de profil existent, sinon les créer
     cursor.execute("PRAGMA table_info(users)")
     cols_users = [col[1] for col in cursor.fetchall()]
     if "household_type" not in cols_users:
@@ -337,7 +56,7 @@ def init_db():
         cursor.execute("ALTER TABLE users ADD COLUMN num_adults INTEGER")
     conn.commit()
 
-    # Table recipes : id, user_id, name, ingredients, instructions, image_url, extras_json
+    # 1.2) Table recipes
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS recipes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -357,7 +76,7 @@ def init_db():
         cursor.execute("ALTER TABLE recipes ADD COLUMN extras_json TEXT")
     conn.commit()
 
-    # Table mealplans : id, user_id, day, meal, recipe_name, timestamp
+    # 1.3) Table mealplans
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS mealplans (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -370,7 +89,15 @@ def init_db():
     )
     """)
     conn.commit()
+
     conn.close()
+
+# On appelle init_db() **immédiatement** à l’import, pour être certain que les tables existent.
+init_db()
+
+# -------------------------------------------------------------------------------
+# 2) FONCTIONS DE GESTION DES DONNÉES
+# -------------------------------------------------------------------------------
 
 def add_user(username: str, password: str) -> bool:
     """
@@ -387,6 +114,7 @@ def add_user(username: str, password: str) -> bool:
         conn.commit()
         return True
     except sqlite3.IntegrityError:
+        # Username déjà existant
         return False
     finally:
         conn.close()
@@ -395,18 +123,24 @@ def verify_user(username: str, password: str) -> Optional[int]:
     """
     Vérifie que le couple (username, password) est valide.
     Si oui, retourne l’user_id. Sinon, retourne None.
+    On entoure d’un try/except pour capturer si jamais la table n’existe pas ou si la DB est verrouillée.
     """
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id FROM users WHERE username = ? AND password = ?",
-        (username, password)
-    )
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        return row[0]
-    return None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM users WHERE username = ? AND password = ?",
+            (username, password)
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return row[0]
+        return None
+    except sqlite3.OperationalError as e:
+        # Logguer l’erreur plus précisément dans la console (ainsi que sur Streamlit Cloud)
+        st.error(f"⚠️ Erreur SQLite : {e}")
+        return None
 
 def get_user_profile(user_id: int) -> dict:
     """
@@ -475,7 +209,8 @@ def insert_recipe(user_id: int, name: str, image_url: str, ingredients_json: str
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO recipes(user_id, name, image_url, ingredients, instructions, extras_json) VALUES(?, ?, ?, ?, ?, ?)",
+        "INSERT INTO recipes(user_id, name, image_url, ingredients, instructions, extras_json) "
+        "VALUES(?, ?, ?, ?, ?, ?)",
         (user_id, name, image_url, ingredients_json, instructions, extras_json)
     )
     conn.commit()
@@ -560,13 +295,113 @@ def parse_extras(extras_str: str) -> list:
     except:
         return []
 
-# Initialise la base et ajoute les colonnes manquantes si besoin
-init_db()
+# -------------------------------------------------------------------------------
+# 3) STYLE GLOBAL (CSS) & NAVBAR + HERO
+# -------------------------------------------------------------------------------
+st.markdown(
+    """
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Poppins', sans-serif !important; }
+        #MainMenu { visibility: hidden; }
+        footer { visibility: hidden; }
+
+        .header {
+            position: fixed; top: 0; left: 0; width: 100%;
+            background: #ffffffcc; backdrop-filter: blur(10px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1); z-index: 1000;
+        }
+        .header-content {
+            max-width: 1200px; margin: 0 auto; padding: 10px 20px;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .header-logo img { width: 40px; height: 40px; }
+        .nav-item { margin-left: 20px; font-weight: 500; cursor: pointer; color: #333; }
+        .nav-item:hover { color: #FFA500; }
+
+        .streamlit-container { padding-top: 100px !important; }
+
+        .hero {
+            position: relative; width: 100%; height: 300px;
+            background: url('https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1200&q=80') no-repeat center center / cover;
+            margin-bottom: 40px; color: white;
+        }
+        .hero-overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.4);
+        }
+        .hero-text {
+            position: relative; z-index: 1;
+            text-align: center; top: 50%; transform: translateY(-50%);
+        }
+        .hero-text h1 { font-size: 3rem; margin-bottom: 10px; }
+        .hero-text p { font-size: 1.2rem; opacity: 0.9; }
+
+        .modal-background {
+            position: fixed; top: 0; left: 0;
+            width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.5); z-index: 1001;
+        }
+        .modal-content {
+            position: fixed; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: white; padding: 30px; border-radius: 8px;
+            max-width: 450px; width: 90%;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2); z-index: 1002;
+        }
+        .modal-title {
+            font-size: 1.3rem; font-weight: 700; margin-bottom: 20px;
+            color: #333; text-align: center;
+        }
+        .modal-close {
+            position: absolute; top: 10px; right: 15px;
+            font-size: 1.2rem; font-weight: 700; color: #666; cursor: pointer;
+        }
+        .modal-close:hover { color: #333; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# NAVBAR
+st.markdown(
+    """
+    <div class="header">
+      <div class="header-content">
+        <div class="header-logo">
+          <img src="https://img.icons8.com/fluency/48/000000/cutlery.png" alt="logo">
+          <span style="font-size:1.5rem; font-weight:700; color:#333;">Batchist</span>
+        </div>
+        <div>
+          <span class="nav-item" onclick="window.location.hash='#home'">Accueil</span>
+          <span class="nav-item" onclick="window.location.hash='#recipes'">Recettes</span>
+          <span class="nav-item" onclick="window.location.hash='#planner'">Planificateur</span>
+          <span class="nav-item" onclick="window.location.hash='#shopping'">Liste de courses</span>
+          <span class="nav-item" onclick="window.location.hash='#tips'">Conseils</span>
+          <span class="nav-item" onclick="window.location.hash='#profile'">Profil</span>
+        </div>
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# HERO
+st.markdown(
+    """
+    <div id="home" class="hero">
+      <div class="hero-overlay"></div>
+      <div class="hero-text">
+        <h1>Batchist</h1>
+        <p>Vos recettes personnelles, votre batch cooking simplifié.</p>
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # -------------------------------------------------------------------------------
-# 4) AUTHENTIFICATION + ONBOARDING :
-#    - Connexion / Inscription
-#    - Pop-Ups d’onboarding (step1: foyer, step2: repas/jour)
+# 4) AUTHENTIFICATION + ONBOARDING
 # -------------------------------------------------------------------------------
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
@@ -582,11 +417,13 @@ if "meals_per_day" not in st.session_state:
 def show_login_page():
     """
     Affiche le formulaire de connexion / inscription.
-    Utilise st.form pour garantir qu’on capture le clic sur “Se connecter” en un seul envoi.
+    On utilise st.form pour qu’un seul clic « Se connecter » déclenche 
+    la requête verify_user, puis le rerun.
     """
     st.subheader("🔒 Connexion / Inscription")
     tab1, tab2 = st.tabs(["🔐 Connexion", "✍️ Inscription"])
 
+    # ---------- Onglet Connexion ----------
     with tab1:
         st.write("Connectez-vous pour accéder à Batchist.")
         with st.form(key="login_form"):
@@ -599,16 +436,18 @@ def show_login_page():
                     st.session_state.user_id = uid
                     st.session_state.username = login_user.strip()
                     st.success(f"Bienvenue, **{login_user.strip()}** !")
-                    # Déterminer si l’on doit passer l’onboarding
                     profile = get_user_profile(uid)
+                    # Si le profil est incomplet, lancer l’onboarding
                     if not profile.get("household_type") or not profile.get("meals_per_day"):
                         st.session_state.onboard_step = 1
                     else:
                         st.session_state.onboard_step = 3
+                    # On force le rerun après avoir mis à jour session_state
                     st.experimental_rerun()
                 else:
                     st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
+    # ---------- Onglet Inscription ----------
     with tab2:
         st.write("Créez votre compte pour commencer.")
         with st.form(key="register_form"):
@@ -628,46 +467,43 @@ def show_login_page():
                     else:
                         st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà.")
 
-# Si l’utilisateur n’est pas connecté, on affiche le login/inscription et on stoppe l’exécution
+# Si l’utilisateur n’est pas connecté, on affiche le login/inscription et on s’arrête immédiatement
 if st.session_state.user_id is None:
     show_login_page()
     st.stop()
 
 # -------------------------------------------------------------------------------
-# 4.1) ONBOARDING POP-UPS si nouvel utilisateur ou première connexion
+# 4.1) ONBOARDING (pop-ups)
 #     Étapes :
-#       1 → choix Solo / Couple / Famille
-#       2 → nombre de repas par jour
-#       3 → terminé → afficher contenu principal
+#        1 → choix Solo / Couple / Famille
+#        2 → nombre de repas par jour
+#        3 → terminé → afficher contenu principal
 # -------------------------------------------------------------------------------
 
 if st.session_state.onboard_step == 1:
-    # Premier pop-up : household type
+    # Popup “Comment vivez-vous ?”
     st.markdown('<div class="modal-background"></div>', unsafe_allow_html=True)
     st.markdown(
         """
         <div class="modal-content">
-          <div class="modal-close" onclick="window._streamlit_close_onboarding()">✕</div>
+          <div class="modal-close" onclick="window._closeOnboarding()" title="Fermer">✕</div>
           <div class="modal-title">Comment vivez-vous ?</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    # JS pour signaler la fermeture
+    # Petit script JS pour injecter le paramètre closeOnboarding=1 dans l’URL
     st.markdown(
         """
         <script>
-        window._streamlit_close_onboarding = function() {
-            window.parent.postMessage({streamlitCloseOnboarding: true}, "*");
+        window._closeOnboarding = function() {
+            const url = new URL(window.location);
+            url.searchParams.set("closeOnboarding", "1");
+            window.history.replaceState(null, null, url.toString());
+            window.location.reload();
         }
-        window.addEventListener("message", (event) => {
-            if (event.data.streamlitCloseOnboarding) {
-                // Ajouter le paramètre closeOnboarding dans l'URL
-                const url = new URL(window.location);
-                url.searchParams.set("closeOnboarding", "1");
-                window.history.replaceState(null, null, url.toString());
-                window.location.reload();
-            }
+        window.addEventListener("message", event => {
+            // (vide) – c’est juste pour lever un handler JS si nécessaire
         });
         </script>
         """,
@@ -676,67 +512,64 @@ if st.session_state.onboard_step == 1:
 
     col1, col2, col3 = st.columns(3, gap="small")
     with col1:
-        if st.button("Solo", key="btn_solo", help="Je vis seul(e).", use_container_width=True):
+        if st.button("Solo", key="btn_solo", use_container_width=True):
             st.session_state.household_type = "Solo"
             st.session_state.onboard_step = 2
             st.experimental_rerun()
         st.markdown(
-            '<div style="text-align:center; margin-top:5px;"><img src="https://img.icons8.com/dusk/100/000000/user.png" alt="solo"/></div>',
+            '<div style="text-align:center; margin-top:5px;">'
+            '<img src="https://img.icons8.com/dusk/100/000000/user.png" alt="solo"/></div>',
             unsafe_allow_html=True
         )
     with col2:
-        if st.button("Couple", key="btn_couple", help="Nous vivons à deux.", use_container_width=True):
+        if st.button("Couple", key="btn_couple", use_container_width=True):
             st.session_state.household_type = "Couple"
             st.session_state.onboard_step = 2
             st.experimental_rerun()
         st.markdown(
-            '<div style="text-align:center; margin-top:5px;"><img src="https://img.icons8.com/dusk/100/000000/couple.png" alt="couple"/></div>',
+            '<div style="text-align:center; margin-top:5px;">'
+            '<img src="https://img.icons8.com/dusk/100/000000/couple.png" alt="couple"/></div>',
             unsafe_allow_html=True
         )
     with col3:
-        if st.button("Famille", key="btn_family", help="Nous sommes en famille.", use_container_width=True):
+        if st.button("Famille", key="btn_family", use_container_width=True):
             st.session_state.household_type = "Famille"
             st.session_state.onboard_step = 2
             st.experimental_rerun()
         st.markdown(
-            '<div style="text-align:center; margin-top:5px;"><img src="https://img.icons8.com/dusk/100/000000/family.png" alt="famille"/></div>',
+            '<div style="text-align:center; margin-top:5px;">'
+            '<img src="https://img.icons8.com/dusk/100/000000/family.png" alt="famille"/></div>',
             unsafe_allow_html=True
         )
 
-    # Si utilisateur clique sur la croix → closeOnboarding param = 1 → passer à 3
+    # Si l’utilisateur a cliqué sur la croix → on récupère le query param “closeOnboarding”
     if st.experimental_get_query_params().get("closeOnboarding"):
         st.session_state.onboard_step = 3
-        st.experimental_set_query_params()
+        st.experimental_set_query_params()  # on supprime le param après usage
         st.experimental_rerun()
     st.stop()
 
 if st.session_state.onboard_step == 2:
-    # Second pop-up : nombre de repas par jour
+    # Popup “Combien de repas par jour ?”
     st.markdown('<div class="modal-background"></div>', unsafe_allow_html=True)
     st.markdown(
         """
         <div class="modal-content">
-          <div class="modal-close" onclick="window._streamlit_close_onboarding()">✕</div>
+          <div class="modal-close" onclick="window._closeOnboarding()" title="Fermer">✕</div>
           <div class="modal-title">Combien de repas par jour préparez-vous ?</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    # JS pour signaler la fermeture
     st.markdown(
         """
         <script>
-        window._streamlit_close_onboarding = function() {
-            window.parent.postMessage({streamlitCloseOnboarding: true}, "*");
+        window._closeOnboarding = function() {
+            const url = new URL(window.location);
+            url.searchParams.set("closeOnboarding", "1");
+            window.history.replaceState(null, null, url.toString());
+            window.location.reload();
         }
-        window.addEventListener("message", (event) => {
-            if (event.data.streamlitCloseOnboarding) {
-                const url = new URL(window.location);
-                url.searchParams.set("closeOnboarding", "1");
-                window.history.replaceState(null, null, url.toString());
-                window.location.reload();
-            }
-        });
         </script>
         """,
         unsafe_allow_html=True,
@@ -749,19 +582,15 @@ if st.session_state.onboard_step == 2:
     )
     if st.button("Valider", key="btn_set_meals", use_container_width=True):
         st.session_state.meals_per_day = meals_input
-        # Définir valeurs par défaut de la composition si nécessaire
+
+        # Valeurs par défaut pour la composition du foyer
         if st.session_state.household_type == "Solo":
-            num_adults = 1
-            num_adolescents = 0
-            num_children = 0
+            num_adults = 1; num_adolescents = 0; num_children = 0
         elif st.session_state.household_type == "Couple":
-            num_adults = 2
-            num_adolescents = 0
-            num_children = 0
-        else:  # Famille → 2 adultes, 0 ados, 0 enfants par défaut
-            num_adults = 2
-            num_adolescents = 0
-            num_children = 0
+            num_adults = 2; num_adolescents = 0; num_children = 0
+        else:  # Famille
+            num_adults = 2; num_adolescents = 0; num_children = 0
+
         update_user_profile(
             st.session_state.user_id,
             {
@@ -780,8 +609,6 @@ if st.session_state.onboard_step == 2:
         st.experimental_set_query_params()
         st.experimental_rerun()
     st.stop()
-
-# Lorsque onboard_step == 3, on passe à l’affichage normal
 
 # -------------------------------------------------------------------------------
 # 5) UTILISATEUR CONNECTÉ & ONBOARDÉ : CONTENU PRINCIPAL
@@ -819,7 +646,7 @@ with st.sidebar:
 # 6) LAYOUT PAR SECTION
 # -------------------------------------------------------------------------------
 
-# SECTION “Accueil” : DASHBOARD avec favoris du mois précédent
+# SECTION “Accueil”
 if section == "Accueil":
     st.markdown('<div id="home"></div>', unsafe_allow_html=True)
     st.header("🏠 Tableau de bord")
@@ -829,12 +656,10 @@ if section == "Accueil":
     if df_plan.empty:
         st.info("Vous n’avez pas encore planifié de repas.")
     else:
-        # Filtrer sur le dernier mois
         now = datetime.now()
         one_month_ago = now - timedelta(days=30)
         df_plan["timestamp"] = pd.to_datetime(df_plan["timestamp"])
         df_last_month = df_plan[df_plan["timestamp"] >= one_month_ago]
-
         if df_last_month.empty:
             st.info("Aucun repas planifié au cours du mois précédent.")
         else:
@@ -869,7 +694,6 @@ elif section == "Mes recettes":
     st.header("📋 Mes recettes")
     st.markdown("Ajoutez, consultez, modifiez ou supprimez vos recettes personnelles.")
 
-    # Récupérer profil pour adapter l’affichage si besoin
     profile = get_user_profile(USER_ID)
 
     # 6.1 – Formulaire d’ajout / édition de recette
@@ -877,7 +701,6 @@ elif section == "Mes recettes":
         df_recettes = get_recipes_for_user(USER_ID)
         all_names = df_recettes["name"].tolist()
 
-        # Sélection d'une recette existante pour édition
         choice = st.selectbox(
             "Sélectionnez une recette à modifier (ou laissez vide pour nouvelle)",
             options=[""] + all_names
@@ -1009,7 +832,7 @@ elif section == "Mes recettes":
 
     st.markdown("---")
 
-    # 6.2 – Affichage des recettes sous forme de CARDS (grille responsive)
+    # 6.2 – Affichage des recettes sous forme de CARDS
     df_recettes = get_recipes_for_user(USER_ID)
     if df_recettes.empty:
         st.info("Vous n’avez (encore) aucune recette enregistrée.")
@@ -1025,7 +848,6 @@ elif section == "Mes recettes":
                     recipe_name = row["name"]
                     image_url = row["image_url"] or "https://via.placeholder.com/300x180.png?text=Pas+d%27image"
                     ingrédients = parse_ingredients(row["ingredients"])
-                    extras = parse_extras(row["extras_json"] or "[]")
                     instructions_text = row["instructions"] or "Aucune instruction précisée."
                     with col:
                         st.markdown(
@@ -1146,25 +968,25 @@ elif section == "Conseils & Astuces":
     **Bienvenue dans la page Astuces !**  
     Découvrez des conseils pour optimiser votre batch cooking, économiser du temps et cuisiner des plats savoureux :
     
-    1. **Planifiez vos menus à l'avance** :  
+    1. **Planifiez vos menus à l'avance ** :  
        Sélectionnez 2 à 3 recettes par semaine que vous pouvez préparer en grandes quantités.  
-    2. **Utilisez des contenants hermétiques** :  
+    2. **Utilisez des contenants hermétiques ** :  
        Investissez dans des boîtes de conservation réutilisables et étiquetez-les pour éviter la confusion.  
-    3. **Cuisinez des aliments polyvalents** :  
+    3. **Cuisinez des aliments polyvalents ** :  
        Préparez des légumineuses, du riz ou du quinoa en grande quantité pour accompagner plusieurs plats.  
-    4. **Congélation intelligente** :  
+    4. **Congélation intelligente ** :  
        Séparez vos plats en portions individuelles avant de congeler pour décongeler rapidement une seule portion.  
-    5. **Optimisez vos ingrédients frais** :  
+    5. **Optimisez vos ingrédients frais ** :  
        Coupez et stockez vos légumes en avance dans des sacs hermétiques ; les herbes fraîches se conservent plus longtemps si elles sont légèrement humides et bien emballées.  
-    6. **Variez les assaisonnements** :  
+    6. **Variez les assaisonnements ** :  
        Préparez une base de protéines (poulet, tofu, œufs) et assaisonnez-la différemment chaque jour (curry, teriyaki, épices mexicaines).  
-    7. **Surveillez les dates de péremption** :  
+    7. **Surveillez les dates de péremption ** :  
        Utilisez un auto-collant pour indiquer la date de préparation.  
-    8. **Impliquer toute la famille** :  
+    8. **Impliquer toute la famille ** :  
        Si vous cuisinez pour une famille, attribuez des tâches simples aux enfants (mélanger, laver les légumes), cela rend l’activité ludique.  
-    9. **Réinventez vos restes** :  
+    9. **Réinventez vos restes ** :  
        Transformez les restes du dîner en lunch box le lendemain (salades composées, wraps, omelettes).  
-    10. **Nettoyage au fur et à mesure** :  
+    10. **Nettoyage au fur et à mesure ** :  
        Pendant que les ingrédients cuisent, profitez des temps de pause pour nettoyer les surfaces et ustensiles utilisés.  
 
     Bon batch cooking !
