@@ -520,6 +520,7 @@ if st.session_state.user_id is None:
     st.subheader("🔒 Connexion / Inscription")
     tab1, tab2 = st.tabs(["🔐 Connexion", "✍️ Inscription"])
 
+    # ----- Onglet Connexion -----
     with tab1:
         st.write("Connectez-vous pour accéder à Batchist.")
         with st.form(key="login_form"):
@@ -535,24 +536,29 @@ if st.session_state.user_id is None:
                 placeholder="••••••••"
             )
             login_submit = st.form_submit_button("Se connecter", use_container_width=True)
+
             if login_submit:
                 uid = verify_user(login_user.strip(), login_pwd)
                 if uid:
                     # Connexion OK : on enregistre en session
                     st.session_state.user_id = uid
                     st.session_state.username = login_user.strip()
+
                     # On regarde si l’utilisateur a déjà son profil complet
                     profil = get_user_profile(uid)
                     if not profil.get("household_type") or not profil.get("meals_per_day"):
                         st.session_state.onboard_step = 1
                     else:
                         st.session_state.onboard_step = 3
+
                     st.success(f"✅ Bienvenue, **{login_user.strip()}** !")
-                    # On relance immédiatement le script pour passer à l’onboarding ou au contenu principal
+                    # → Dès que user_id est défini, on relance le script pour
+                    #   passer directement à l’onboarding ou au contenu principal.
                     st.experimental_rerun()
                 else:
                     st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
+    # ----- Onglet Inscription -----
     with tab2:
         st.write("Créez votre compte pour commencer.")
         with st.form(key="register_form"):
@@ -574,6 +580,7 @@ if st.session_state.user_id is None:
                 placeholder="••••••••"
             )
             register_submit = st.form_submit_button("Créer mon compte", use_container_width=True)
+
             if register_submit:
                 if not new_user.strip():
                     st.error("❌ Le nom d’utilisateur ne peut pas être vide.")
@@ -585,15 +592,16 @@ if st.session_state.user_id is None:
                         st.success("✅ Compte créé. Vous pouvez maintenant vous connecter.")
                     else:
                         st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà.")
-    # Tant que user_id est None, on arrête ici et on n’affiche pas la suite
+
+    # Tant que st.session_state.user_id est None, on bloque ici
     st.stop()
 
 
 # À ce stade, st.session_state.user_id est défini.
-# On passe à l’onboarding ou, si déjà rempli, au contenu principal.
+# On passe à l’onboarding (une seule fois) ou directement au contenu principal.
 
 # ----------------------------------
-# 4.2) ONBOARDING : ÉTAPES 1 & 2 (UNE FOIS)
+# 4.2) ONBOARDING : ÉTAPES 1 & 2 (UNE SEULE FOIS)
 # ----------------------------------
 
 # --- Étape 1 : Choisir le foyer (ONE‐TIME) ---
@@ -618,7 +626,8 @@ if st.session_state.onboard_step == 1:
             st.session_state.onboard_step = 2
             st.stop()
 
-    st.stop()  # Tant que l’utilisateur n’a pas cliqué, on bloque ici.
+    # Tant que l’utilisateur n’a pas cliqué, on reste bloqué ici
+    st.stop()
 
 # --- Étape 2 : Combien de repas par jour ? (ONE‐TIME juste après étape 1) ---
 elif st.session_state.onboard_step == 2:
@@ -651,12 +660,13 @@ elif st.session_state.onboard_step == 2:
                 "num_adults": num_adults
             }
         )
+        # On passe à l’étape 3 (contenu principal)
         st.session_state.onboard_step = 3
         st.stop()
 
     st.stop()
 
-# À présent, st.session_state.onboard_step >= 3 → on passe au CONTENU PRINCIPAL.
+# À présent, st.session_state.onboard_step >= 3  → on passe au CONTENU PRINCIPAL.
 
 
 # -------------------------------------------------------------------------------
@@ -698,7 +708,7 @@ with st.sidebar:
 # 6) LAYOUT PAR SECTION
 # -------------------------------------------------------------------------------
 
-# SECTION “Accueil” : DASHBOARD avec favoris du mois précédent
+# SECTION “Accueil” : TABLEAU DE BORD avec favoris du mois précédent
 if section == "Accueil":
     st.markdown('<div id="home"></div>', unsafe_allow_html=True)
     st.header("🏠 Tableau de bord")
@@ -1097,7 +1107,7 @@ elif section == "Conseils & Astuces":
     5. **Optimisez vos ingrédients frais** :  
        Coupez et stockez vos légumes en avance dans des sacs hermétiques ; les herbes fraîches se conservent plus longtemps si elles sont légèrement humides et bien emballées.  
     6. **Variez les assaisonnements** :  
-       Préparez une base de protéines (poulet, tofu, œufs) et assaisonnez-la différemment chaque jour (curry, teriyaki, épices mexicaines).  
+       Préparez une base de protéines (poulet, tofu, œufs) et assaisonnez‐la différemment chaque jour (curry, teriyaki, épices mexicaines).  
     7. **Surveillez les dates de péremption** :  
        Utilisez un autocollant pour indiquer la date de préparation.  
     8. **Impliquer toute la famille** :  
