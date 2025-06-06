@@ -492,7 +492,6 @@ def parse_extras(extras_str: str) -> list:
 # -------------------------------------------------------------------------------
 init_db()
 
-
 # -------------------------------------------------------------------------------
 # 4) AUTHENTIFICATION + ONBOARDING (UNE SEULE FOIS) + CONTENU PRINCIPAL
 # -------------------------------------------------------------------------------
@@ -514,13 +513,10 @@ if "meals_per_day" not in st.session_state:
     st.session_state.meals_per_day = None
 
 
-def show_login_page() -> None:
-    """
-    Affiche le formulaire de connexion/inscription.
-    Lors d’un login réussi, on remplit user_id + username + onboard_step,
-    puis on retourne. Streamlit détectera l’état user_id != None 
-    et relancera la suite du script.
-    """
+# -------------------------
+# 4.1) LOGIN / INSCRIPTION
+# -------------------------
+if st.session_state.user_id is None:
     st.subheader("🔒 Connexion / Inscription")
     tab1, tab2 = st.tabs(["🔐 Connexion", "✍️ Inscription"])
 
@@ -542,17 +538,17 @@ def show_login_page() -> None:
             if login_submit:
                 uid = verify_user(login_user.strip(), login_pwd)
                 if uid:
-                    # Connexion OK : on met à jour la session
+                    # Connexion OK : on enregistre en session
                     st.session_state.user_id = uid
                     st.session_state.username = login_user.strip()
-                    # On regarde si l’utilisateur a déjà rempli son profil
+                    # On regarde si l’utilisateur a déjà son profil complet
                     profil = get_user_profile(uid)
                     if not profil.get("household_type") or not profil.get("meals_per_day"):
                         st.session_state.onboard_step = 1
                     else:
                         st.session_state.onboard_step = 3
                     st.success(f"✅ Bienvenue, **{login_user.strip()}** !")
-                    # On relance pour passer à l’onboarding ou au contenu principal
+                    # On relance le script pour passer à l’onboarding ou au contenu principal
                     st.experimental_rerun()
                 else:
                     st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
@@ -589,17 +585,17 @@ def show_login_page() -> None:
                         st.success("✅ Compte créé. Vous pouvez maintenant vous connecter.")
                     else:
                         st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà.")
+    st.stop()  # Tant que user_id est None, on bloque ici et n’affiche pas le reste du script.
 
 
-# Si l’utilisateur n’est pas connecté (user_id == None), on affiche le login & stop.
-if st.session_state.user_id is None:
-    show_login_page()
-    st.stop()
+# À ce stade, st.session_state.user_id est défini.
+# On passe à l’onboarding ou, si déjà rempli, au contenu principal.
 
+# ----------------------------------
+# 4.2) ONBOARDING : ÉTAPES 1 & 2 UNIQUEMENT UNE FOIS
+# ----------------------------------
 
-# À présent, user_id est défini (login réussi) → on gère l’onboarding en fonction de onboard_step.
-
-# --- Étape 1 : Choisir le foyer (UNE SEULE FOIS, à la toute première connexion) ---
+# --- Étape 1 : Choisir le foyer (ONE‐TIME) ---
 if st.session_state.onboard_step == 1:
     st.markdown("---")
     st.header("🏠 Comment vivez-vous ?")
@@ -621,9 +617,9 @@ if st.session_state.onboard_step == 1:
             st.session_state.onboard_step = 2
             st.experimental_rerun()
 
-    st.stop()  # On stoppe tout le reste jusqu’à ce que l’utilisateur choisisse Solo/Couple/Famille
+    st.stop()  # On arrête tout là, tant que l’utilisateur n’a pas cliqué.
 
-# --- Étape 2 : Combien de repas par jour ? (UNE SEULE FOIS, juste après le choix foyer) ---
+# --- Étape 2 : Combien de repas par jour ? (ONE‐TIME juste après étape 1) ---
 elif st.session_state.onboard_step == 2:
     st.markdown("---")
     st.header("🍽️ Combien de repas par jour préparez-vous ?")
@@ -659,7 +655,8 @@ elif st.session_state.onboard_step == 2:
 
     st.stop()
 
-# À présent, st.session_state.onboard_step >= 3  => on passe au contenu principal.
+# À présent, st.session_state.onboard_step >= 3  → on passe au CONTENU PRINCIPAL.
+
 
 # -------------------------------------------------------------------------------
 # 5) UTILISATEUR CONNECTÉ & ONBOARDÉ : CONTENU PRINCIPAL
@@ -675,7 +672,7 @@ with st.sidebar:
     st.write(f"🏠 Foyer : {profil.get('household_type', '–')}")
     st.write(f"🍽️ Repas/jour : {profil.get('meals_per_day', '–')}")
     if st.button("🔓 Se déconnecter", use_container_width=True):
-        # Efface toutes les clés de session et relance pour revenir au login
+        # Supprime toutes les clés de session et redémarre
         for key in ["user_id", "username", "onboard_step", "household_type", "meals_per_day"]:
             if key in st.session_state:
                 del st.session_state[key]
