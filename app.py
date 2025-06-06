@@ -20,12 +20,12 @@ st.set_page_config(
 # BANNIÈRE (IMAGE EN LIGNE)
 # --------------------------------------------------------------------------------
 
-# On utilise un lien direct vers une image hébergée sur Unsplash.
+# Exemple d’URL d’image hébergée. Vous pouvez changer pour toute URL d’image libre de droits.
 BANNER_URL = "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1350&q=80"
 st.image(BANNER_URL, use_container_width=True)
 
 # --------------------------------------------------------------------------------
-# BASE DE DONNÉES SQLITE
+# CHEMIN VERS LA BASE DE DONNÉES SQLITE
 # --------------------------------------------------------------------------------
 
 DB_PATH = "meal_planner.db"
@@ -33,38 +33,31 @@ DB_PATH = "meal_planner.db"
 @st.cache_resource
 def get_connection():
     """
-    Retourne une connexion SQLite3 partagée. 
-    Le décorateur @st.cache_resource s'assure que cette fonction n'est 
-    exécutée qu'une seule fois, pour éviter de multiplier les connexions.
+    Retourne une connexion SQLite3 unique pour toute la session.
     """
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     return conn
 
 def initialize_database():
     """
-    Crée les tables nécessaires si elles n'existent pas encore :
-      - users
-      - recipes
-      - mealplans
+    Crée les tables de base si elles n'existent pas.
+    Ensuite, si la table 'users' existe déjà mais n'a pas la colonne 'household_name',
+    on ajoute automatiquement cette colonne.
     """
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Table users : id, username, password_hash, household_name
-    cursor.execute(
-        """
+    # 1) Création des tables si elles n'existent pas
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            household_name TEXT
+            password_hash TEXT NOT NULL
+            -- NOTE : la colonne household_name sera ajoutée ensuite si nécessaire
         )
-        """
-    )
+    """)
 
-    # Table recipes : id, user_id, recipe_name, ingredients, instructions
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS recipes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -73,12 +66,9 @@ def initialize_database():
             instructions TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
-        """
-    )
+    """)
 
-    # Table mealplans : id, user_id, day, meal, recipe_name, timestamp
-    cursor.execute(
-        """
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS mealplans (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -88,12 +78,19 @@ def initialize_database():
             timestamp TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
-        """
-    )
-
+    """)
     conn.commit()
 
-# On initialise la base immédiatement, avant tout autre appel à la base.
+    # 2) Vérification / ajout de la colonne 'household_name' dans 'users' si elle n'existe pas
+    # On récupère la liste des colonnes actuelles de 'users'
+    cursor.execute("PRAGMA table_info(users)")
+    cols = [col_info[1] for col_info in cursor.fetchall()]  # col_info[1] = nom de la colonne
+    if "household_name" not in cols:
+        # On ajoute la colonne
+        cursor.execute("ALTER TABLE users ADD COLUMN household_name TEXT")
+        conn.commit()
+
+# Appel immédiat à l'initialisation (avant tout accès à la base)
 initialize_database()
 
 # --------------------------------------------------------------------------------
@@ -102,7 +99,7 @@ initialize_database()
 
 def hash_password(password: str) -> str:
     """
-    Retourne le hachage SHA-256 du mot de passe en entrée.
+    Retourne le hachage SHA-256 du mot de passe.
     """
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
@@ -112,8 +109,8 @@ def hash_password(password: str) -> str:
 
 def login_user(username: str, password: str):
     """
-    Vérifie si l'utilisateur existe en base : on compare username + hash du mot de passe.
-    Si les informations sont correctes, on renvoie l'ID de l'utilisateur. Sinon, None.
+    Vérifie si l'utilisateur existe en base. 
+    Compare username et hash du mot de passe. Si correct, retourne l'ID utilisateur, sinon None.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -122,20 +119,19 @@ def login_user(username: str, password: str):
     try:
         cursor.execute(
             "SELECT id FROM users WHERE username = ? AND password_hash = ?",
-            (username.strip(), pwd_hash),
+            (username.strip(), pwd_hash)
         )
         row = cursor.fetchone()
         return row[0] if row else None
     except sqlite3.OperationalError as e:
-        # Si la table n'existe pas ou qu'il y a un problème de base, on affiche l'erreur dans le log.
         st.error("❌ Erreur interne de la base de données lors de la connexion.")
         st.write(f"_Détail technique : {e}_")
         return None
 
 def register_user(username: str, password: str, household_name: str):
     """
-    Inscrit un nouvel utilisateur en base.
-    Renvoie l'ID généré pour cet utilisateur.
+    Inscrit un nouvel utilisateur en base. 
+    Retourne l'ID généré ou None si le username existe déjà.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -144,12 +140,17 @@ def register_user(username: str, password: str, household_name: str):
     try:
         cursor.execute(
             "INSERT INTO users (username, password_hash, household_name) VALUES (?, ?, ?)",
-            (username.strip(), pwd_hash, household_name.strip()),
+            (username.strip(), pwd_hash, household_name.strip())
         )
         conn.commit()
         return cursor.lastrowid
     except sqlite3.IntegrityError:
-        # Si le nom d'utilisateur existe déjà (contrainte UNIQUE)
+        # Contrainte UNIQUE violée (username déjà existant)
+        return None
+    except sqlite3.OperationalError as e:
+        # Par sécurité, on affiche l'erreur technique si autre problème
+        st.error("❌ Erreur interne de la base lors de l'inscription.")
+        st.write(f"_Détail technique : {e}_")
         return None
 
 # --------------------------------------------------------------------------------
@@ -173,7 +174,6 @@ def show_login_page():
     """
     Affiche la page d'authentification avec deux onglets : Connexion et Inscription.
     """
-
     st.title("🔒 Connexion / Inscription")
     tab_login, tab_register = st.tabs(["Connexion", "Inscription"])
 
@@ -192,7 +192,8 @@ def show_login_page():
                     st.success(f"✅ Bienvenue, **{login_username.strip()}** !")
                     st.session_state.user_id = user_id
                     st.session_state.username = login_username.strip()
-                    # On laisse le script se poursuivre naturellement (pas besoin de st.experimental_rerun())
+                    # On ne force pas st.experimental_rerun() : le script se termine avec st.stop() plus bas,
+                    # puis redémarre automatiquement (session_state.user_id n'est plus None)
                 else:
                     st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
@@ -213,10 +214,10 @@ def show_login_page():
                 new_user_id = register_user(reg_username, reg_password, reg_household)
                 if new_user_id:
                     st.success(f"✅ Inscription réussie. Vous pouvez maintenant vous connecter, **{reg_username.strip()}**.")
-                    # Par défaut, l'utilisateur reste sur cet onglet. 
-                    # Lorsqu'il change pour "Connexion", il pourra se connecter.
+                    # L'utilisateur reste sur l'onglet Inscription. 
+                    # S'il clique ensuite sur "Connexion", il pourra se logguer.
                 else:
-                    st.error("❌ Ce nom d’utilisateur existe déjà. Veuillez en choisir un autre.")
+                    st.error("❌ Ce nom d’utilisateur existe déjà.")
 
 # --------------------------------------------------------------------------------
 # FONCTIONS DE GESTION DES RECETTES ET DU PLANNING
@@ -230,32 +231,32 @@ def add_recipe(user_id: int, recipe_name: str, ingredients: str, instructions: s
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO recipes (user_id, recipe_name, ingredients, instructions) VALUES (?, ?, ?, ?)",
-        (user_id, recipe_name.strip(), ingredients.strip(), instructions.strip()),
+        (user_id, recipe_name.strip(), ingredients.strip(), instructions.strip())
     )
     conn.commit()
 
 def get_recipes_for_user(user_id: int) -> pd.DataFrame:
     """
     Récupère toutes les recettes de l'utilisateur sous forme de DataFrame.
-    Colonnes retournées : ['id', 'recipe_name', 'ingredients', 'instructions']
+    Colonnes : ['id', 'recipe_name', 'ingredients', 'instructions']
     """
     conn = get_connection()
     df = pd.read_sql_query(
         "SELECT id, recipe_name, ingredients, instructions FROM recipes WHERE user_id = ?",
         conn,
-        params=(user_id,),
+        params=(user_id,)
     )
     return df
 
 def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
     """
-    Écrase le planning existant pour l'utilisateur et substitue le nouveau.
-    plan_df doit avoir les colonnes ["Day", "Meal", "Recipe"].
-    On ajoute à chaque ligne un timestamp commun.
+    Supprime l'ancien planning et insère le nouveau (avec timestamp commun).
+    plan_df doit contenir les colonnes ["Day", "Meal", "Recipe"].
     """
     conn = get_connection()
     cursor = conn.cursor()
-    # On supprime l'ancien planning pour cet utilisateur
+
+    # Supprimer l'ancien planning
     cursor.execute("DELETE FROM mealplans WHERE user_id = ?", (user_id,))
     conn.commit()
 
@@ -263,20 +264,20 @@ def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
     for _, row in plan_df.iterrows():
         cursor.execute(
             "INSERT INTO mealplans (user_id, day, meal, recipe_name, timestamp) VALUES (?, ?, ?, ?, ?)",
-            (user_id, row["Day"], row["Meal"], row["Recipe"], now_str),
+            (user_id, row["Day"], row["Meal"], row["Recipe"], now_str)
         )
     conn.commit()
 
 def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
     """
-    Récupère le planning de repas pour l'utilisateur sous forme de DataFrame.
-    Colonnes retournées : ['id', 'day', 'meal', 'recipe_name', 'timestamp']
+    Récupère le planning de l'utilisateur sous forme de DataFrame.
+    Colonnes : ['id', 'day', 'meal', 'recipe_name', 'timestamp']
     """
     conn = get_connection()
     df = pd.read_sql_query(
         "SELECT id, day, meal, recipe_name, timestamp FROM mealplans WHERE user_id = ?",
         conn,
-        params=(user_id,),
+        params=(user_id,)
     )
     return df
 
@@ -287,16 +288,15 @@ def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
 def main_app():
     """
     Affiche le menu latéral et les différentes pages :
-      - Tableau de bord
-      - Mes recettes
-      - Liste de courses
-      - Se déconnecter
+    - Tableau de bord
+    - Mes recettes
+    - Liste de courses
+    - Se déconnecter
     """
-
     st.sidebar.title(f"👋 Bonjour, {st.session_state.username} !")
     menu = st.sidebar.radio(
         "Navigation",
-        ["🏠 Tableau de bord", "📖 Mes recettes", "🛒 Liste de courses", "🔓 Se déconnecter"],
+        ["🏠 Tableau de bord", "📖 Mes recettes", "🛒 Liste de courses", "🔓 Se déconnecter"]
     )
 
     # ---- TABLEAU DE BORD ----
@@ -342,22 +342,21 @@ def main_app():
         if df_plan.empty:
             st.info("Planifiez d’abord vos repas pour générer la liste de courses.")
         else:
-            # Génère un ensemble d'ingrédients à partir des recettes planifiées
+            # Récupère les ingrédients de chaque recette planifiée
             conn = get_connection()
             ingredients_list = []
             for recipe in df_plan["recipe_name"].unique():
                 df_rec = pd.read_sql_query(
                     "SELECT ingredients FROM recipes WHERE user_id = ? AND recipe_name = ?",
                     conn,
-                    params=(st.session_state.user_id, recipe),
+                    params=(st.session_state.user_id, recipe)
                 )
                 if not df_rec.empty:
                     ingr_str = df_rec.iloc[0]["ingredients"]
-                    ing_list = [i.strip() for i in ingr_str.split(",")]
+                    ing_list = [i.strip() for i in ingr_str.split(",") if i.strip() != ""]
                     ingredients_list.extend(ing_list)
 
             if ingredients_list:
-                # Comptabilise approximativement chaque ingrédient
                 df_shop = pd.DataFrame(pd.Series(ingredients_list).value_counts(), columns=["Quantité Approx."])
                 df_shop.reset_index(inplace=True)
                 df_shop.columns = ["Ingrédient", "Quantité Approx."]
@@ -367,21 +366,17 @@ def main_app():
 
     # ---- SE DÉCONNECTER ----
     elif menu == "🔓 Se déconnecter":
-        # Réinitialise les clés de session pour revenir à la page de connexion
         for key in ["user_id", "username", "onboard_step", "household_name"]:
             if key in st.session_state:
                 del st.session_state[key]
-        # Relance le script pour afficher la page de connexion
         st.experimental_rerun()
 
 # --------------------------------------------------------------------------------
 # LOGIQUE PRINCIPALE
 # --------------------------------------------------------------------------------
 
-# Si l'utilisateur n'est pas connecté, on affiche la page de connexion/inscription
 if st.session_state.user_id is None:
     show_login_page()
     st.stop()
 
-# Sinon, on affiche l'application principale
 main_app()
