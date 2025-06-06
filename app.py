@@ -181,6 +181,19 @@ st.markdown(
             font-weight: 700;
             margin-bottom: 20px;
             color: #333;
+            text-align: center;
+        }
+        .modal-close {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #666;
+            cursor: pointer;
+        }
+        .modal-close:hover {
+            color: #333;
         }
         .modal-options {
             display: flex;
@@ -215,6 +228,8 @@ st.markdown(
             padding: 8px 20px;
             cursor: pointer;
             font-size: 1rem;
+            display: block;
+            margin: 20px auto 0;
         }
         .modal-button:hover {
             background: #ff9800;
@@ -578,12 +593,13 @@ def show_login_page():
                 st.session_state.user_id = uid
                 st.session_state.username = login_user.strip()
                 st.success(f"Bienvenue, **{login_user.strip()}** !")
-                # Démarrer l’onboarding
+                # Démarrer l’onboarding ou aller directement à l'application
                 profile = get_user_profile(uid)
                 if not profile.get("household_type") or not profile.get("meals_per_day"):
                     st.session_state.onboard_step = 1
                 else:
                     st.session_state.onboard_step = 3
+                st.experimental_rerun()
             else:
                 st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
@@ -623,19 +639,33 @@ if st.session_state.onboard_step == 1:
     st.markdown(
         """
         <div class="modal-content">
+          <div class="modal-close" onclick="window._streamlit_close_onboarding()">✕</div>
           <div class="modal-title">Comment vivez-vous ?</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    # Bouton X en haut à droite pour fermer la modale et passer à l'application
+    # On gère via un petit script JS intégré
+    st.markdown(
+        """
+        <script>
+        window._streamlit_close_onboarding = function() {
+            window.parent.postMessage({streamlitCloseOnboarding: true}, "*");
+        }
+        window.addEventListener("message", (event) => {
+            if (event.data.streamlitCloseOnboarding) {
+                // Rien à faire côté JS
+            }
+        });
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+
     col1, col2, col3 = st.columns(3, gap="small")
     with col1:
-        if st.button(
-            "Solo", 
-            key="btn_solo", 
-            help="Je vis seul(e).",
-            use_container_width=True
-        ):
+        if st.button("Solo", key="btn_solo", help="Je vis seul(e).", use_container_width=True):
             st.session_state.household_type = "Solo"
             st.session_state.onboard_step = 2
             st.experimental_rerun()
@@ -644,12 +674,7 @@ if st.session_state.onboard_step == 1:
             unsafe_allow_html=True
         )
     with col2:
-        if st.button(
-            "Couple", 
-            key="btn_couple", 
-            help="Nous vivons à deux.", 
-            use_container_width=True
-        ):
+        if st.button("Couple", key="btn_couple", help="Nous vivons à deux.", use_container_width=True):
             st.session_state.household_type = "Couple"
             st.session_state.onboard_step = 2
             st.experimental_rerun()
@@ -658,12 +683,7 @@ if st.session_state.onboard_step == 1:
             unsafe_allow_html=True
         )
     with col3:
-        if st.button(
-            "Famille", 
-            key="btn_family", 
-            help="Nous sommes en famille.", 
-            use_container_width=True
-        ):
+        if st.button("Famille", key="btn_family", help="Nous sommes en famille.", use_container_width=True):
             st.session_state.household_type = "Famille"
             st.session_state.onboard_step = 2
             st.experimental_rerun()
@@ -671,6 +691,12 @@ if st.session_state.onboard_step == 1:
             '<div style="text-align:center; margin-top:5px;"><img src="https://img.icons8.com/dusk/100/000000/family.png" alt="famille"/></div>',
             unsafe_allow_html=True
         )
+    # Gérer le bouton X pour fermer l'onboarding sans sélectionner
+    if st.experimental_get_query_params().get("closeOnboarding"):
+        # L'utilisateur a cliqué sur la croix → ignorer l'onboarding
+        st.session_state.onboard_step = 3
+        st.experimental_set_query_params()
+        st.experimental_rerun()
     st.stop()
 
 if st.session_state.onboard_step == 2:
@@ -679,48 +705,65 @@ if st.session_state.onboard_step == 2:
     st.markdown(
         """
         <div class="modal-content">
+          <div class="modal-close" onclick="window._streamlit_close_onboarding()">✕</div>
           <div class="modal-title">Combien de repas par jour préparez-vous ?</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    with st.container():
-        meals_input = st.number_input(
-            "Nombre de repas / jour :", 
-            min_value=1, max_value=10, step=1, 
-            value=3, key="meals_input"
+    # JS pour fer ler la modale si l'utilisateur clique sur la croix
+    st.markdown(
+        """
+        <script>
+        window._streamlit_close_onboarding = function() {
+            window.parent.postMessage({streamlitCloseOnboarding: true}, "*");
+        }
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    meals_input = st.number_input(
+        "Nombre de repas / jour :", 
+        min_value=1, max_value=10, step=1, 
+        value=3, key="meals_input"
+    )
+    if st.button("Valider", key="btn_set_meals", use_container_width=True):
+        st.session_state.meals_per_day = meals_input
+        # Donner des valeurs par défaut pour famille, si nécessaire
+        if st.session_state.household_type == "Solo":
+            num_adults = 1
+            num_adolescents = 0
+            num_children = 0
+        elif st.session_state.household_type == "Couple":
+            num_adults = 2
+            num_adolescents = 0
+            num_children = 0
+        else:  # Famille → initialiser à 2 adultes, 0 adolescents, 0 enfants par défaut
+            num_adults = 2
+            num_adolescents = 0
+            num_children = 0
+        update_user_profile(
+            st.session_state.user_id,
+            {
+                "household_type": st.session_state.household_type,
+                "meals_per_day": st.session_state.meals_per_day,
+                "num_children": num_children,
+                "num_adolescents": num_adolescents,
+                "num_adults": num_adults
+            }
         )
-        st.write("")  # espace
-        if st.button("Valider", key="btn_set_meals", use_container_width=True):
-            st.session_state.meals_per_day = meals_input
-            # Définir valeurs par défaut pour composition famille si besoin
-            if st.session_state.household_type == "Solo":
-                num_adults = 1
-                num_adolescents = 0
-                num_children = 0
-            elif st.session_state.household_type == "Couple":
-                num_adults = 2
-                num_adolescents = 0
-                num_children = 0
-            else:  # Famille → initialiser à 2 adultes, 0 adolescents, 0 enfants par défaut
-                num_adults = 2
-                num_adolescents = 0
-                num_children = 0
-            update_user_profile(
-                st.session_state.user_id,
-                {
-                    "household_type": st.session_state.household_type,
-                    "meals_per_day": st.session_state.meals_per_day,
-                    "num_children": num_children,
-                    "num_adolescents": num_adolescents,
-                    "num_adults": num_adults
-                }
-            )
-            st.session_state.onboard_step = 3
-            st.experimental_rerun()
+        st.session_state.onboard_step = 3
+        st.experimental_rerun()
+
+    # Si l'utilisateur clique sur la croix (en JS), on le note via un query param “closeOnboarding”
+    if st.experimental_get_query_params().get("closeOnboarding"):
+        st.session_state.onboard_step = 3
+        st.experimental_set_query_params()
+        st.experimental_rerun()
     st.stop()
 
-# Lorsque onboard_step == 3, c’est terminé → on passe à l’affichage normal
+# Lorsque onboard_step == 3, on passe à l’affichage normal
 
 # -------------------------------------------------------------------------------
 # 5) UTILISATEUR CONNECTÉ & ONBOARDÉ : CONTENU PRINCIPAL
@@ -1085,25 +1128,25 @@ elif section == "Conseils & Astuces":
     **Bienvenue dans la page Astuces !**  
     Découvrez des conseils pour optimiser votre batch cooking, économiser du temps et cuisiner des plats savoureux :
     
-    1. **Planifiez vos menus à l'avance** :  
+    1. **Planifiez vos menus à l'avance **  
        Sélectionnez 2 à 3 recettes par semaine que vous pouvez préparer en grandes quantités.  
-    2. **Utilisez des contenants hermétiques** :  
+    2. **Utilisez des contenants hermétiques **  
        Investissez dans des boîtes de conservation réutilisables et étiquetez-les pour éviter la confusion.  
-    3. **Cuisinez des aliments polyvalents** :  
+    3. **Cuisinez des aliments polyvalents **  
        Préparez des légumineuses, du riz ou du quinoa en grande quantité pour accompagner plusieurs plats.  
-    4. **Congélation intelligente** :  
+    4. **Congélation intelligente **  
        Séparez vos plats en portions individuelles avant de congeler pour décongeler rapidement une seule portion.  
-    5. **Optimisez vos ingrédients frais** :  
+    5. **Optimisez vos ingrédients frais **  
        Coupez et stockez vos légumes en avance dans des sacs hermétiques ; les herbes fraîches se conservent plus longtemps si elles sont légèrement humides et bien emballées.  
-    6. **Variez les assaisonnements** :  
+    6. **Variez les assaisonnements **  
        Préparez une base de protéines (poulet, tofu, œufs) et assaisonnez-la différemment chaque jour (curry, teriyaki, épices mexicaines).  
-    7. **Surveillez les dates de péremption** :  
+    7. **Surveillez les dates de péremption **  
        Utilisez un auto-collant pour indiquer la date de préparation.  
-    8. **Impliquer toute la famille** :  
+    8. **Impliquer toute la famille **  
        Si vous cuisinez pour une famille, attribuez des tâches simples aux enfants (mélanger, laver les légumes), cela rend l’activité ludique.  
-    9. **Réinventez vos restes** :  
+    9. **Réinventez vos restes **  
        Transformez les restes du dîner en lunch box le lendemain (salades composées, wraps, omelettes).  
-    10. **Nettoyage au fur et à mesure** :  
+    10. **Nettoyage au fur et à mesure **  
        Pendant que les ingrédients cuisent, profitez des temps de pause pour nettoyer les surfaces et ustensiles utilisés.  
 
     Bon batch cooking !
