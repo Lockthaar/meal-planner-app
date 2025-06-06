@@ -1,47 +1,55 @@
 # app.py
 
-import streamlit as st
+import os
 import sqlite3
+import streamlit as st
 import pandas as pd
 import json
 from collections import defaultdict
 from typing import Optional
 import io
 from datetime import datetime, timedelta
-import time
 
 # -------------------------------------------------------------------------------
-# 1) DÉFINITION ET INITIALISATION DE LA BASE DE DONNÉES
-#    On s’assure qu'init_db() est bel et bien executé en PREMIER lieu,
-#    avant tout affichage ou logique de la page.
+# 1) DÉLETION OPTIONNELLE D'UNE ANCIENNE BASE (POUR DEBUG)
 # -------------------------------------------------------------------------------
+# Si vous rencontrez toujours une erreur "no such table: users", supprimez le fichier meal_planner.db existant
+# en décommentant la ligne suivante (ou faites-le manuellement à la racine de votre projet) :
 
+# if os.path.exists("meal_planner.db"):
+#     os.remove("meal_planner.db")
+
+# -------------------------------------------------------------------------------
+# 2) DÉFINITION DU CHEMIN DE LA BASE ET DES FONCTIONS D’INIT / CONNEXION
+# -------------------------------------------------------------------------------
 DB_PATH = "meal_planner.db"
 
 def get_connection():
-    # Crée ou ouvre le fichier SQLite situé dans le dossier courant.
+    """
+    Ouvre une connexion vers le fichier SQLite meal_planner.db
+    """
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     return conn
 
 def init_db():
     """
     1) Crée les tables users, recipes, mealplans si elles n’existent pas.
-    2) Vérifie et ajoute les colonnes manquantes (image_url, extras_json, profil fields).
+    2) Ajoute les colonnes manquantes (profil, image_url, extras_json) le cas échéant.
     """
     conn = get_connection()
     cursor = conn.cursor()
 
-    # 1.1) Table users
+    # 2.1) Table users
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL
-    )
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL
+        )
     """)
     conn.commit()
 
-    # Vérifier si les colonnes de profil existent, sinon les créer
+    # Vérifier/ajouter colonnes profil si manquantes
     cursor.execute("PRAGMA table_info(users)")
     cols_users = [col[1] for col in cursor.fetchall()]
     if "household_type" not in cols_users:
@@ -56,16 +64,16 @@ def init_db():
         cursor.execute("ALTER TABLE users ADD COLUMN num_adults INTEGER")
     conn.commit()
 
-    # 1.2) Table recipes
+    # 2.2) Table recipes
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS recipes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        name TEXT NOT NULL,
-        ingredients TEXT NOT NULL,
-        instructions TEXT,
-        FOREIGN KEY(user_id) REFERENCES users(id)
-    )
+        CREATE TABLE IF NOT EXISTS recipes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            ingredients TEXT NOT NULL,
+            instructions TEXT,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
     """)
     conn.commit()
     cursor.execute("PRAGMA table_info(recipes)")
@@ -76,54 +84,57 @@ def init_db():
         cursor.execute("ALTER TABLE recipes ADD COLUMN extras_json TEXT")
     conn.commit()
 
-    # 1.3) Table mealplans
+    # 2.3) Table mealplans
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS mealplans (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        day TEXT NOT NULL,
-        meal TEXT NOT NULL,
-        recipe_name TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        FOREIGN KEY(user_id) REFERENCES users(id)
-    )
+        CREATE TABLE IF NOT EXISTS mealplans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            day TEXT NOT NULL,
+            meal TEXT NOT NULL,
+            recipe_name TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
     """)
     conn.commit()
 
     conn.close()
+    # Afficher un log dans la console pour vérifier que l'init est passée
+    print("✅ init_db() exécuté – tables (users, recipes, mealplans) OK")
 
-# On appelle init_db() **immédiatement** à l’import, pour être certain que les tables existent.
+# APPEL IMMÉDIAT À init_db(), avant toute logique Streamlit
 init_db()
 
 # -------------------------------------------------------------------------------
-# 2) FONCTIONS DE GESTION DES DONNÉES
+# 3) FONCTIONS DE GESTION DES DONNÉES (CRUD)
 # -------------------------------------------------------------------------------
-
 def add_user(username: str, password: str) -> bool:
     """
-    Tente d’ajouter un nouvel utilisateur.
-    Retourne True si succès, False si le username existe déjà.
+    Ajoute un nouvel utilisateur dans la table users.
+    Retourne True si OK, False si le username existe déjà ou erreur SQLite.
     """
-    conn = get_connection()
-    cursor = conn.cursor()
     try:
+        conn = get_connection()
+        cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO users(username, password) VALUES(?, ?)",
             (username, password)
         )
         conn.commit()
+        conn.close()
         return True
     except sqlite3.IntegrityError:
-        # Username déjà existant
+        # Username déjà existant : UNIQUE contraint
         return False
-    finally:
-        conn.close()
+    except sqlite3.OperationalError as e:
+        st.error(f"⚠️ SQLite error dans add_user(): {e}")
+        return False
 
 def verify_user(username: str, password: str) -> Optional[int]:
     """
-    Vérifie que le couple (username, password) est valide.
-    Si oui, retourne l’user_id. Sinon, retourne None.
-    On entoure d’un try/except pour capturer si jamais la table n’existe pas ou si la DB est verrouillée.
+    Vérifie que (username,password) existe dans la table users.
+    Si oui, renvoie l’id. Sinon, renvoie None.
+    En cas d’erreur SQLite, affiche st.error(...) et renvoie None.
     """
     try:
         conn = get_connection()
@@ -138,13 +149,12 @@ def verify_user(username: str, password: str) -> Optional[int]:
             return row[0]
         return None
     except sqlite3.OperationalError as e:
-        # Logguer l’erreur plus précisément dans la console (ainsi que sur Streamlit Cloud)
-        st.error(f"⚠️ Erreur SQLite : {e}")
+        st.error(f"⚠️ SQLite error dans verify_user(): {e}")
         return None
 
 def get_user_profile(user_id: int) -> dict:
     """
-    Récupère le profil de l’utilisateur (household_type, meals_per_day, num_children, num_adolescents, num_adults).
+    Retourne le profil (household_type, meals_per_day, num_children, num_adolescents, num_adults) de l’utilisateur.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -166,8 +176,8 @@ def get_user_profile(user_id: int) -> dict:
 
 def update_user_profile(user_id: int, profile: dict):
     """
-    Met à jour les champs de profil dans la table users.
-    profile dict doit contenir keys: household_type, meals_per_day, num_children, num_adolescents, num_adults
+    Met à jour le profil dans la table users pour l’id donné.
+    profile doit contenir : household_type, meals_per_day, num_children, num_adolescents, num_adults
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -188,8 +198,8 @@ def update_user_profile(user_id: int, profile: dict):
 
 def get_recipes_for_user(user_id: int) -> pd.DataFrame:
     """
-    Récupère toutes les recettes pour cet user_id sous forme de DataFrame.
-    Colonnes : ['id', 'name', 'image_url', 'ingredients', 'instructions', 'extras_json']
+    Renvoie un DataFrame des recettes (id, name, image_url, ingredients, instructions, extras_json)
+    pour l’utilisateur spécifié.
     """
     conn = get_connection()
     df = pd.read_sql_query(
@@ -203,8 +213,7 @@ def get_recipes_for_user(user_id: int) -> pd.DataFrame:
 def insert_recipe(user_id: int, name: str, image_url: str, ingredients_json: str,
                   instructions: str, extras_json: str):
     """
-    Insère une nouvelle recette pour cet utilisateur.
-    extras_json contient boissons, produits maison, plantes, animaux.
+    Insère une nouvelle recette pour l’utilisateur user_id.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -219,7 +228,7 @@ def insert_recipe(user_id: int, name: str, image_url: str, ingredients_json: str
 def update_recipe(recipe_id: int, name: str, image_url: str, ingredients_json: str,
                   instructions: str, extras_json: str):
     """
-    Met à jour une recette existante.
+    Met à jour une recette existante via son ID.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -233,7 +242,7 @@ def update_recipe(recipe_id: int, name: str, image_url: str, ingredients_json: s
 
 def delete_recipe(recipe_id: int):
     """
-    Supprime la recette dont l’ID est recipe_id.
+    Supprime la recette dont l’id est passé en paramètre.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -243,8 +252,7 @@ def delete_recipe(recipe_id: int):
 
 def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
     """
-    Récupère le planning de l’utilisateur sous forme de DataFrame.
-    Colonnes : ['id', 'day', 'meal', 'recipe_name', 'timestamp']
+    Renvoie un DataFrame du planning (id, day, meal, recipe_name, timestamp) pour user_id.
     """
     conn = get_connection()
     df = pd.read_sql_query(
@@ -257,8 +265,8 @@ def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
 
 def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
     """
-    Remplace (supprime + réinsère) tout le planning pour cet user_id.
-    On ajoute un champ timestamp pour chaque insertion.
+    Remplace (supprime + réinsère) tout le planning pour user_id.
+    Ajoute un champ timestamp pour chaque ligne.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -276,8 +284,7 @@ def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
 @st.cache_data
 def parse_ingredients(ing_str: str) -> list:
     """
-    Convertit la chaîne JSON enregistrée dans 'ingredients' 
-    en liste de dicts : {"ingredient", "quantity", "unit"}.
+    Convertit la chaîne JSON stockée sous 'ingredients' en liste de dicts.
     """
     try:
         return json.loads(ing_str)
@@ -287,8 +294,7 @@ def parse_ingredients(ing_str: str) -> list:
 @st.cache_data
 def parse_extras(extras_str: str) -> list:
     """
-    Convertit la chaîne JSON de 'extras_json' en liste de dicts :
-    {"category", "item", "quantity", "unit"}.
+    Convertit la chaîne JSON stockée sous 'extras_json' en liste de dicts.
     """
     try:
         return json.loads(extras_str)
@@ -296,8 +302,13 @@ def parse_extras(extras_str: str) -> list:
         return []
 
 # -------------------------------------------------------------------------------
-# 3) STYLE GLOBAL (CSS) & NAVBAR + HERO
+# 4) CSS GLOBAL POUR NAVBAR + HERO + MODALES
 # -------------------------------------------------------------------------------
+st.set_page_config(
+    page_title="Batchist: Meal Planner & Batch Cooking",
+    page_icon="🥘",
+    layout="wide",
+)
 st.markdown(
     """
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
@@ -337,6 +348,7 @@ st.markdown(
         .hero-text h1 { font-size: 3rem; margin-bottom: 10px; }
         .hero-text p { font-size: 1.2rem; opacity: 0.9; }
 
+        /* MODAL */
         .modal-background {
             position: fixed; top: 0; left: 0;
             width: 100%; height: 100%;
@@ -346,7 +358,7 @@ st.markdown(
             position: fixed; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
             background: white; padding: 30px; border-radius: 8px;
-            max-width: 450px; width: 90%;
+            max-width: 450px; width: 90%; 
             box-shadow: 0 4px 20px rgba(0,0,0,0.2); z-index: 1002;
         }
         .modal-title {
@@ -363,6 +375,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# -------------------------------------------------------------------------------
+# 5) NAVBAR + HERO (HTML/CSS)
+# -------------------------------------------------------------------------------
 # NAVBAR
 st.markdown(
     """
@@ -401,14 +416,14 @@ st.markdown(
 )
 
 # -------------------------------------------------------------------------------
-# 4) AUTHENTIFICATION + ONBOARDING
+# 6) AUTHENTIFICATION + ONBOARDING
 # -------------------------------------------------------------------------------
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "username" not in st.session_state:
     st.session_state.username = ""
 if "onboard_step" not in st.session_state:
-    st.session_state.onboard_step = 0  # 0 = pas encore connecté, 1 = onboarding foyer, 2 = onboarding repas, 3 = onboardé
+    st.session_state.onboard_step = 0  # 0 : non connecté, 1 : onboarding foyer, 2 : onboarding repas, 3 : onboardé
 if "household_type" not in st.session_state:
     st.session_state.household_type = None
 if "meals_per_day" not in st.session_state:
@@ -416,9 +431,7 @@ if "meals_per_day" not in st.session_state:
 
 def show_login_page():
     """
-    Affiche le formulaire de connexion / inscription.
-    On utilise st.form pour qu’un seul clic « Se connecter » déclenche 
-    la requête verify_user, puis le rerun.
+    Formulaire Connexion / Inscription, chacun dans un st.form pour capturer le submit-button.
     """
     st.subheader("🔒 Connexion / Inscription")
     tab1, tab2 = st.tabs(["🔐 Connexion", "✍️ Inscription"])
@@ -437,12 +450,10 @@ def show_login_page():
                     st.session_state.username = login_user.strip()
                     st.success(f"Bienvenue, **{login_user.strip()}** !")
                     profile = get_user_profile(uid)
-                    # Si le profil est incomplet, lancer l’onboarding
                     if not profile.get("household_type") or not profile.get("meals_per_day"):
                         st.session_state.onboard_step = 1
                     else:
                         st.session_state.onboard_step = 3
-                    # On force le rerun après avoir mis à jour session_state
                     st.experimental_rerun()
                 else:
                     st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
@@ -465,23 +476,18 @@ def show_login_page():
                     if ok:
                         st.success("✅ Compte créé. Vous pouvez maintenant vous connecter.")
                     else:
-                        st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà.")
+                        st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà ou erreur SQLite.")
 
-# Si l’utilisateur n’est pas connecté, on affiche le login/inscription et on s’arrête immédiatement
+# Tant que user_id est None, on affiche la page login et on stoppe (aucune autre requête n’est lancée)
 if st.session_state.user_id is None:
     show_login_page()
     st.stop()
 
 # -------------------------------------------------------------------------------
-# 4.1) ONBOARDING (pop-ups)
-#     Étapes :
-#        1 → choix Solo / Couple / Famille
-#        2 → nombre de repas par jour
-#        3 → terminé → afficher contenu principal
+# 6.1) ONBOARDING POP-UPS (étapes 1 & 2)
 # -------------------------------------------------------------------------------
-
 if st.session_state.onboard_step == 1:
-    # Popup “Comment vivez-vous ?”
+    # Pop-up “Comment vivez-vous ?”
     st.markdown('<div class="modal-background"></div>', unsafe_allow_html=True)
     st.markdown(
         """
@@ -492,7 +498,7 @@ if st.session_state.onboard_step == 1:
         """,
         unsafe_allow_html=True,
     )
-    # Petit script JS pour injecter le paramètre closeOnboarding=1 dans l’URL
+    # JS pour injecter closeOnboarding dans l’URL puis reload
     st.markdown(
         """
         <script>
@@ -502,9 +508,6 @@ if st.session_state.onboard_step == 1:
             window.history.replaceState(null, null, url.toString());
             window.location.reload();
         }
-        window.addEventListener("message", event => {
-            // (vide) – c’est juste pour lever un handler JS si nécessaire
-        });
         </script>
         """,
         unsafe_allow_html=True,
@@ -542,15 +545,15 @@ if st.session_state.onboard_step == 1:
             unsafe_allow_html=True
         )
 
-    # Si l’utilisateur a cliqué sur la croix → on récupère le query param “closeOnboarding”
+    # Si l’utilisateur clique sur la croix (closeOnboarding=1), on passe à l’appli
     if st.experimental_get_query_params().get("closeOnboarding"):
         st.session_state.onboard_step = 3
-        st.experimental_set_query_params()  # on supprime le param après usage
+        st.experimental_set_query_params()
         st.experimental_rerun()
     st.stop()
 
 if st.session_state.onboard_step == 2:
-    # Popup “Combien de repas par jour ?”
+    # Pop-up “Combien de repas par jour ?”
     st.markdown('<div class="modal-background"></div>', unsafe_allow_html=True)
     st.markdown(
         """
@@ -582,14 +585,12 @@ if st.session_state.onboard_step == 2:
     )
     if st.button("Valider", key="btn_set_meals", use_container_width=True):
         st.session_state.meals_per_day = meals_input
-
-        # Valeurs par défaut pour la composition du foyer
         if st.session_state.household_type == "Solo":
-            num_adults = 1; num_adolescents = 0; num_children = 0
+            num_adults, num_adolescents, num_children = 1, 0, 0
         elif st.session_state.household_type == "Couple":
-            num_adults = 2; num_adolescents = 0; num_children = 0
-        else:  # Famille
-            num_adults = 2; num_adolescents = 0; num_children = 0
+            num_adults, num_adolescents, num_children = 2, 0, 0
+        else:
+            num_adults, num_adolescents, num_children = 2, 0, 0
 
         update_user_profile(
             st.session_state.user_id,
@@ -611,11 +612,10 @@ if st.session_state.onboard_step == 2:
     st.stop()
 
 # -------------------------------------------------------------------------------
-# 5) UTILISATEUR CONNECTÉ & ONBOARDÉ : CONTENU PRINCIPAL
+# 7) UTILISATEUR CONNECTÉ & ONBOARDÉ : AFFICHAGE DU CONTENU PRINCIPAL
 # -------------------------------------------------------------------------------
 USER_ID = st.session_state.user_id
 
-# Barre latérale : profil + déconnexion + navigation
 with st.sidebar:
     st.markdown("---")
     st.write(f"👤 **Utilisateur : {st.session_state.username}**")
@@ -643,10 +643,9 @@ with st.sidebar:
     )
 
 # -------------------------------------------------------------------------------
-# 6) LAYOUT PAR SECTION
+# 8) LAYOUT PAR SECTION
 # -------------------------------------------------------------------------------
-
-# SECTION “Accueil”
+# — Accueil (Dashboard)
 if section == "Accueil":
     st.markdown('<div id="home"></div>', unsafe_allow_html=True)
     st.header("🏠 Tableau de bord")
@@ -688,19 +687,16 @@ if section == "Accueil":
                     )
                 idx += 1
 
-# SECTION “Mes recettes”
+# — Mes recettes
 elif section == "Mes recettes":
     st.markdown('<div id="recipes"></div>', unsafe_allow_html=True)
     st.header("📋 Mes recettes")
     st.markdown("Ajoutez, consultez, modifiez ou supprimez vos recettes personnelles.")
 
-    profile = get_user_profile(USER_ID)
+    df_recettes = get_recipes_for_user(USER_ID)
+    all_names = df_recettes["name"].tolist()
 
-    # 6.1 – Formulaire d’ajout / édition de recette
     with st.expander("➕ Ajouter / Modifier une recette", expanded=True):
-        df_recettes = get_recipes_for_user(USER_ID)
-        all_names = df_recettes["name"].tolist()
-
         choice = st.selectbox(
             "Sélectionnez une recette à modifier (ou laissez vide pour nouvelle)",
             options=[""] + all_names
@@ -832,7 +828,7 @@ elif section == "Mes recettes":
 
     st.markdown("---")
 
-    # 6.2 – Affichage des recettes sous forme de CARDS
+    # Affichage des recettes en cards
     df_recettes = get_recipes_for_user(USER_ID)
     if df_recettes.empty:
         st.info("Vous n’avez (encore) aucune recette enregistrée.")
@@ -869,7 +865,7 @@ elif section == "Mes recettes":
                             unsafe_allow_html=True
                         )
 
-# SECTION “Planificateur”
+# — Planificateur
 elif section == "Planificateur":
     st.markdown('<div id="planner"></div>', unsafe_allow_html=True)
     st.header("📅 Planifier mes repas")
@@ -915,7 +911,7 @@ elif section == "Planificateur":
             )
         )
 
-# SECTION “Liste de courses”
+# — Liste de courses
 elif section == "Liste de courses":
     st.markdown('<div id="shopping"></div>', unsafe_allow_html=True)
     st.header("🛒 Liste de courses générée")
@@ -960,7 +956,7 @@ elif section == "Liste de courses":
             mime="text/csv",
         )
 
-# SECTION “Conseils & Astuces”
+# — Conseils & Astuces
 elif section == "Conseils & Astuces":
     st.markdown('<div id="tips"></div>', unsafe_allow_html=True)
     st.header("💡 Conseils & Astuces sur le Batch Cooking")
@@ -968,31 +964,31 @@ elif section == "Conseils & Astuces":
     **Bienvenue dans la page Astuces !**  
     Découvrez des conseils pour optimiser votre batch cooking, économiser du temps et cuisiner des plats savoureux :
     
-    1. **Planifiez vos menus à l'avance ** :  
+    1. **Planifiez vos menus à l'avance** :  
        Sélectionnez 2 à 3 recettes par semaine que vous pouvez préparer en grandes quantités.  
-    2. **Utilisez des contenants hermétiques ** :  
+    2. **Utilisez des contenants hermétiques** :  
        Investissez dans des boîtes de conservation réutilisables et étiquetez-les pour éviter la confusion.  
-    3. **Cuisinez des aliments polyvalents ** :  
+    3. **Cuisinez des aliments polyvalents** :  
        Préparez des légumineuses, du riz ou du quinoa en grande quantité pour accompagner plusieurs plats.  
-    4. **Congélation intelligente ** :  
+    4. **Congélation intelligente** :  
        Séparez vos plats en portions individuelles avant de congeler pour décongeler rapidement une seule portion.  
-    5. **Optimisez vos ingrédients frais ** :  
+    5. **Optimisez vos ingrédients frais** :  
        Coupez et stockez vos légumes en avance dans des sacs hermétiques ; les herbes fraîches se conservent plus longtemps si elles sont légèrement humides et bien emballées.  
-    6. **Variez les assaisonnements ** :  
+    6. **Variez les assaisonnements** :  
        Préparez une base de protéines (poulet, tofu, œufs) et assaisonnez-la différemment chaque jour (curry, teriyaki, épices mexicaines).  
-    7. **Surveillez les dates de péremption ** :  
+    7. **Surveillez les dates de péremption** :  
        Utilisez un auto-collant pour indiquer la date de préparation.  
-    8. **Impliquer toute la famille ** :  
+    8. **Impliquer toute la famille** :  
        Si vous cuisinez pour une famille, attribuez des tâches simples aux enfants (mélanger, laver les légumes), cela rend l’activité ludique.  
-    9. **Réinventez vos restes ** :  
+    9. **Réinventez vos restes** :  
        Transformez les restes du dîner en lunch box le lendemain (salades composées, wraps, omelettes).  
-    10. **Nettoyage au fur et à mesure ** :  
+    10. **Nettoyage au fur et à mesure** :  
        Pendant que les ingrédients cuisent, profitez des temps de pause pour nettoyer les surfaces et ustensiles utilisés.  
 
     Bon batch cooking !
     """)
 
-# SECTION “Profil”
+# — Profil
 else:  # section == "Profil"
     st.markdown('<div id="profile"></div>', unsafe_allow_html=True)
     st.header("👤 Profil utilisateur")
