@@ -548,8 +548,8 @@ if st.session_state.user_id is None:
                     else:
                         st.session_state.onboard_step = 3
                     st.success(f"✅ Bienvenue, **{login_user.strip()}** !")
-                    # => On arrête ici pour que Streamlit réexécute tout automatiquement
-                    st.stop()
+                    # On relance immédiatement le script pour passer à l’onboarding ou au contenu principal
+                    st.experimental_rerun()
                 else:
                     st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
@@ -656,7 +656,7 @@ elif st.session_state.onboard_step == 2:
 
     st.stop()
 
-# À présent, st.session_state.onboard_step >= 3  → on passe au CONTENU PRINCIPAL.
+# À présent, st.session_state.onboard_step >= 3 → on passe au CONTENU PRINCIPAL.
 
 
 # -------------------------------------------------------------------------------
