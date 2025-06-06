@@ -437,18 +437,21 @@ def update_user_profile(user_id: int, profile: dict):
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
+    cursor.execute(
+        """
         UPDATE users
         SET household_type = ?, meals_per_day = ?, num_children = ?, num_adolescents = ?, num_adults = ?
         WHERE id = ?
-    """, (
-        profile.get("household_type"),
-        profile.get("meals_per_day"),
-        profile.get("num_children"),
-        profile.get("num_adolescents"),
-        profile.get("num_adults"),
-        user_id
-    ))
+        """,
+        (
+            profile.get("household_type"),
+            profile.get("meals_per_day"),
+            profile.get("num_children"),
+            profile.get("num_adolescents"),
+            profile.get("num_adults"),
+            user_id
+        )
+    )
     conn.commit()
     conn.close()
 
@@ -488,11 +491,14 @@ def update_recipe(recipe_id: int, name: str, image_url: str, ingredients_json: s
     """
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("""
+    cursor.execute(
+        """
         UPDATE recipes
         SET name = ?, image_url = ?, ingredients = ?, instructions = ?, extras_json = ?
         WHERE id = ?
-    """, (name, image_url, ingredients_json, instructions, extras_json, recipe_id))
+        """,
+        (name, image_url, ingredients_json, instructions, extras_json, recipe_id)
+    )
     conn.commit()
     conn.close()
 
@@ -568,6 +574,8 @@ init_db()
 #    - Connexion / Inscription
 #    - Pop-Ups d’onboarding (step1: foyer, step2: repas/jour)
 # -------------------------------------------------------------------------------
+
+# Initialisation des clés de session si inexistantes
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "username" not in st.session_state:
@@ -578,6 +586,11 @@ if "household_type" not in st.session_state:
     st.session_state.household_type = None
 if "meals_per_day" not in st.session_state:
     st.session_state.meals_per_day = None
+
+# Nouveau drapeau de session pour gérer le passage immédiat après login
+if "just_logged_in" not in st.session_state:
+    st.session_state.just_logged_in = False
+
 
 def show_login_page():
     """
@@ -590,12 +603,22 @@ def show_login_page():
     with tab1:
         st.write("Connectez-vous pour accéder à Batchist.")
         with st.form(key="login_form"):
-            login_user = st.text_input("Nom d'utilisateur", key="login_username", placeholder="Ex. : utilisateur123")
-            login_pwd  = st.text_input("Mot de passe", type="password", key="login_password", placeholder="••••••••")
+            login_user = st.text_input(
+                "Nom d'utilisateur", 
+                key="login_username", 
+                placeholder="Ex. : utilisateur123"
+            )
+            login_pwd = st.text_input(
+                "Mot de passe", 
+                type="password", 
+                key="login_password", 
+                placeholder="••••••••"
+            )
             login_submit = st.form_submit_button("Se connecter", use_container_width=True)
             if login_submit:
                 uid = verify_user(login_user.strip(), login_pwd)
                 if uid:
+                    # Authentification OK
                     st.session_state.user_id = uid
                     st.session_state.username = login_user.strip()
                     st.success(f"Bienvenue, **{login_user.strip()}** !")
@@ -605,16 +628,32 @@ def show_login_page():
                         st.session_state.onboard_step = 1
                     else:
                         st.session_state.onboard_step = 3
-                    st.experimental_rerun()
+                    # On met à True pour que le top-level sache de ne pas stopper
+                    st.session_state.just_logged_in = True
+                    return  # on sort de show_login_page pour laisser le top-level continuer
                 else:
                     st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
     with tab2:
         st.write("Créez votre compte pour commencer.")
         with st.form(key="register_form"):
-            new_user = st.text_input("Nom d'utilisateur souhaité", key="register_username", placeholder="Ex. : mon_profil")
-            new_pwd  = st.text_input("Mot de passe", type="password", key="register_password", placeholder="••••••••")
-            confirm_pwd = st.text_input("Confirmez le mot de passe", type="password", key="register_confirm", placeholder="••••••••")
+            new_user = st.text_input(
+                "Nom d'utilisateur souhaité", 
+                key="register_username", 
+                placeholder="Ex. : mon_profil"
+            )
+            new_pwd = st.text_input(
+                "Mot de passe", 
+                type="password", 
+                key="register_password", 
+                placeholder="••••••••"
+            )
+            confirm_pwd = st.text_input(
+                "Confirmez le mot de passe", 
+                type="password", 
+                key="register_confirm", 
+                placeholder="••••••••"
+            )
             register_submit = st.form_submit_button("Créer mon compte", use_container_width=True)
             if register_submit:
                 if not new_user.strip():
@@ -628,10 +667,17 @@ def show_login_page():
                     else:
                         st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà.")
 
+
 # Si l’utilisateur n’est pas connecté, on affiche le login/inscription et on stoppe l’exécution
 if st.session_state.user_id is None:
     show_login_page()
-    st.stop()
+    # Si l'utilisateur vient juste de se connecter, ne pas st.stop(), sinon st.stop()
+    if not st.session_state.just_logged_in:
+        st.stop()
+    else:
+        # On remet à False pour la suite
+        st.session_state.just_logged_in = False
+
 
 # -------------------------------------------------------------------------------
 # 4.1) ONBOARDING POP-UPS si nouvel utilisateur ou première connexion
@@ -647,29 +693,8 @@ if st.session_state.onboard_step == 1:
     st.markdown(
         """
         <div class="modal-content">
-          <div class="modal-close" onclick="window._streamlit_close_onboarding()">✕</div>
           <div class="modal-title">Comment vivez-vous ?</div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    # JS pour signaler la fermeture
-    st.markdown(
-        """
-        <script>
-        window._streamlit_close_onboarding = function() {
-            window.parent.postMessage({streamlitCloseOnboarding: true}, "*");
-        }
-        window.addEventListener("message", (event) => {
-            if (event.data.streamlitCloseOnboarding) {
-                // Ajouter le paramètre closeOnboarding dans l'URL
-                const url = new URL(window.location);
-                url.searchParams.set("closeOnboarding", "1");
-                window.history.replaceState(null, null, url.toString());
-                window.location.reload();
-            }
-        });
-        </script>
         """,
         unsafe_allow_html=True,
     )
@@ -679,65 +704,28 @@ if st.session_state.onboard_step == 1:
         if st.button("Solo", key="btn_solo", help="Je vis seul(e).", use_container_width=True):
             st.session_state.household_type = "Solo"
             st.session_state.onboard_step = 2
-            st.experimental_rerun()
-        st.markdown(
-            '<div style="text-align:center; margin-top:5px;"><img src="https://img.icons8.com/dusk/100/000000/user.png" alt="solo"/></div>',
-            unsafe_allow_html=True
-        )
     with col2:
         if st.button("Couple", key="btn_couple", help="Nous vivons à deux.", use_container_width=True):
             st.session_state.household_type = "Couple"
             st.session_state.onboard_step = 2
-            st.experimental_rerun()
-        st.markdown(
-            '<div style="text-align:center; margin-top:5px;"><img src="https://img.icons8.com/dusk/100/000000/couple.png" alt="couple"/></div>',
-            unsafe_allow_html=True
-        )
     with col3:
         if st.button("Famille", key="btn_family", help="Nous sommes en famille.", use_container_width=True):
             st.session_state.household_type = "Famille"
             st.session_state.onboard_step = 2
-            st.experimental_rerun()
-        st.markdown(
-            '<div style="text-align:center; margin-top:5px;"><img src="https://img.icons8.com/dusk/100/000000/family.png" alt="famille"/></div>',
-            unsafe_allow_html=True
-        )
 
-    # Si utilisateur clique sur la croix → closeOnboarding param = 1 → passer à 3
-    if st.experimental_get_query_params().get("closeOnboarding"):
-        st.session_state.onboard_step = 3
-        st.experimental_set_query_params()
-        st.experimental_rerun()
-    st.stop()
+    # Tant que l'utilisateur n'a pas cliqué sur l'une des trois options, on affiche ce pop-up
+    if st.session_state.onboard_step == 1:
+        st.stop()
 
-if st.session_state.onboard_step == 2:
+
+elif st.session_state.onboard_step == 2:
     # Second pop-up : nombre de repas par jour
     st.markdown('<div class="modal-background"></div>', unsafe_allow_html=True)
     st.markdown(
         """
         <div class="modal-content">
-          <div class="modal-close" onclick="window._streamlit_close_onboarding()">✕</div>
           <div class="modal-title">Combien de repas par jour préparez-vous ?</div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    # JS pour signaler la fermeture
-    st.markdown(
-        """
-        <script>
-        window._streamlit_close_onboarding = function() {
-            window.parent.postMessage({streamlitCloseOnboarding: true}, "*");
-        }
-        window.addEventListener("message", (event) => {
-            if (event.data.streamlitCloseOnboarding) {
-                const url = new URL(window.location);
-                url.searchParams.set("closeOnboarding", "1");
-                window.history.replaceState(null, null, url.toString());
-                window.location.reload();
-            }
-        });
-        </script>
         """,
         unsafe_allow_html=True,
     )
@@ -762,6 +750,7 @@ if st.session_state.onboard_step == 2:
             num_adults = 2
             num_adolescents = 0
             num_children = 0
+
         update_user_profile(
             st.session_state.user_id,
             {
@@ -773,19 +762,21 @@ if st.session_state.onboard_step == 2:
             }
         )
         st.session_state.onboard_step = 3
-        st.experimental_rerun()
 
-    if st.experimental_get_query_params().get("closeOnboarding"):
-        st.session_state.onboard_step = 3
-        st.experimental_set_query_params()
-        st.experimental_rerun()
+    # Tant que l'utilisateur n'a pas confirmé le nombre de repas, on stoppe ici
+    if st.session_state.onboard_step == 2:
+        st.stop()
+
+# Lorsque onboard_step == 3 (ou autre), on passe à l’affichage normal
+if st.session_state.onboard_step < 3:
+    # Si on arrive ici, c’est que l’utilisateur n’a pas terminé l’onboarding
     st.stop()
 
-# Lorsque onboard_step == 3, on passe à l’affichage normal
 
 # -------------------------------------------------------------------------------
 # 5) UTILISATEUR CONNECTÉ & ONBOARDÉ : CONTENU PRINCIPAL
 # -------------------------------------------------------------------------------
+
 USER_ID = st.session_state.user_id
 
 # Barre latérale : profil + déconnexion + navigation
@@ -796,10 +787,14 @@ with st.sidebar:
     st.write(f"🏠 Foyer : {profile.get('household_type', '–')}")
     st.write(f"🍽️ Repas/jour : {profile.get('meals_per_day', '–')}")
     if st.button("🔓 Se déconnecter", use_container_width=True):
-        for key in ["user_id","username","onboard_step","household_type","meals_per_day"]:
+        for key in ["user_id", "username", "onboard_step", "household_type", "meals_per_day"]:
             if key in st.session_state:
                 del st.session_state[key]
+        # Remise à zéro du drapeau de login
+        if "just_logged_in" in st.session_state:
+            st.session_state.just_logged_in = False
         st.experimental_rerun()
+
     st.markdown("---")
     st.write("🗂️ **Navigation :**")
     section = st.radio(
@@ -899,17 +894,21 @@ elif section == "Mes recettes":
             default_instr = ""
             default_extras = []
 
+        # Nom, image, instructions
         name = st.text_input("Nom de la recette", value=default_name, placeholder="Ex. : Gratin de légumes")
         image_url = st.text_input("URL de l’image (optionnelle)", value=default_image, placeholder="Ex. : https://…/mon_image.jpg")
         instructions = st.text_area("Instructions (facultatif)", value=default_instr, placeholder="Décrivez ici la préparation…")
 
+        # -- Ingrédients --
         st.markdown("**Ingrédients**")
         ing_mode = st.radio("Mode d’ajout des ingrédients", ("Saisie manuelle", "Importer depuis texte"), index=0, horizontal=True)
+
+        # On réinitialise ing_count à chaque affichage pour éviter le résidu de sessions précédentes
+        if "ing_count" not in st.session_state or recipe_id is not None:
+            st.session_state.ing_count = len(default_ing) if default_ing else 1
+
         ingrédients_list = []
         if ing_mode == "Saisie manuelle":
-            count_default = len(default_ing) if default_ing else 1
-            if "ing_count" not in st.session_state:
-                st.session_state.ing_count = count_default
             if st.button("➕ Ajouter une ligne", key="add_ing_manu"):
                 st.session_state.ing_count += 1
 
@@ -923,13 +922,20 @@ elif section == "Mes recettes":
                 with c2:
                     qt = st.number_input(f"Quantité #{i+1}", min_value=0.0, format="%.2f", key=f"ing_qty_{i}", value=qty_i)
                 with c3:
-                    un = st.selectbox(f"Unité #{i+1}", ["mg","g","kg","cl","dl","l","pièce(s)"], key=f"ing_unit_{i}", index=["mg","g","kg","cl","dl","l","pièce(s)"].index(unit_i) if unit_i in ["mg","g","kg","cl","dl","l","pièce(s)"] else 1)
+                    un = st.selectbox(
+                        f"Unité #{i+1}", 
+                        ["mg","g","kg","cl","dl","l","pièce(s)"], 
+                        key=f"ing_unit_{i}", 
+                        index=["mg","g","kg","cl","dl","l","pièce(s)"].index(unit_i) if unit_i in ["mg","g","kg","cl","dl","l","pièce(s)"] else 1
+                    )
                 ingrédients_list.append((nm, qt, un))
 
         else:
             raw_text = st.text_area(
                 "Copiez/collez votre liste d’ingrédients (Nom, quantité, unité)",
-                value="\n".join([f"{ing['ingredient']}, {ing['quantity']}, {ing['unit']}" for ing in default_ing]) if default_ing else "",
+                value="\n".join(
+                    [f"{ing['ingredient']}, {ing['quantity']}, {ing['unit']}" for ing in default_ing]
+                ) if default_ing else "",
                 key="import_ing_text"
             )
             if raw_text:
@@ -951,10 +957,12 @@ elif section == "Mes recettes":
                 else:
                     st.warning("Aucun ingrédient valide détecté.")
 
+        # -- Extras --
         st.markdown("**Extras** (Boissons, Maison, Plantes, Animaux)")
-        extras_list = []
-        if "extra_count" not in st.session_state:
+        if "extra_count" not in st.session_state or recipe_id is not None:
             st.session_state.extra_count = len(default_extras) if default_extras else 1
+
+        extras_list = []
         if st.button("➕ Ajouter un extra", key="add_extra"):
             st.session_state.extra_count += 1
 
@@ -974,9 +982,20 @@ elif section == "Mes recettes":
             with dcol2:
                 item = st.text_input(f"Article #{j+1}", key=f"extra_item_{j}", value=item_default)
             with dcol3:
-                qty_extra = st.number_input(f"Quantité #{j+1}", min_value=0.0, format="%.2f", key=f"extra_qty_{j}", value=qty_extra_default)
+                qty_extra = st.number_input(
+                    f"Quantité #{j+1}", 
+                    min_value=0.0, 
+                    format="%.2f", 
+                    key=f"extra_qty_{j}", 
+                    value=qty_extra_default
+                )
             with dcol4:
-                unit_extra = st.selectbox(f"Unité #{j+1}", ["mg","g","kg","cl","dl","l","pièce(s)"], key=f"extra_unit_{j}", index=["mg","g","kg","cl","dl","l","pièce(s)"].index(unit_extra_default) if unit_extra_default in ["mg","g","kg","cl","dl","l","pièce(s)"] else 1)
+                unit_extra = st.selectbox(
+                    f"Unité #{j+1}", 
+                    ["mg","g","kg","cl","dl","l","pièce(s)"], 
+                    key=f"extra_unit_{j}", 
+                    index=["mg","g","kg","cl","dl","l","pièce(s)"].index(unit_extra_default) if unit_extra_default in ["mg","g","kg","cl","dl","l","pièce(s)"] else 1
+                )
             extras_list.append({
                 "category": category,
                 "item": item,
@@ -984,6 +1003,7 @@ elif section == "Mes recettes":
                 "unit": unit_extra
             })
 
+        # Bouton Enregistrer la recette
         if st.button("💾 Enregistrer la recette", key="save_recipe", use_container_width=True):
             if not name.strip():
                 st.error("❌ Le nom de la recette ne peut pas être vide.")
@@ -992,20 +1012,26 @@ elif section == "Mes recettes":
             else:
                 ing_json = json.dumps([
                     {"ingredient": nm.strip(), "quantity": float(qt), "unit": un.strip()}
-                    for nm, qt, un in ingrédients_list if nm.strip() and qt > 0 and un.strip()
+                    for nm, qt, un in ingrédients_list 
+                    if nm.strip() and qt > 0 and un.strip()
                 ], ensure_ascii=False)
-                extras_json = json.dumps([e for e in extras_list if e["item"].strip() and e["quantity"] > 0], ensure_ascii=False)
+                extras_json = json.dumps(
+                    [e for e in extras_list if e["item"].strip() and e["quantity"] > 0], 
+                    ensure_ascii=False
+                )
                 if recipe_id:
                     update_recipe(recipe_id, name.strip(), image_url.strip(), ing_json, instructions.strip(), extras_json)
                     st.success(f"✅ Recette « {name.strip()} » mise à jour.")
                 else:
                     insert_recipe(USER_ID, name.strip(), image_url.strip(), ing_json, instructions.strip(), extras_json)
                     st.success(f"✅ Recette « {name.strip()} » ajoutée.")
-                # Réinitialiser le formulaire
-                for key in ["new_name", "new_image_url", "new_instructions", "ing_count", "extra_count", "import_ing_text"]:
+
+                # Réinitialiser les compteurs et champs de session pour éviter qu'ils restent figés
+                for key in ["ing_count", "extra_count", "import_ing_text"]:
                     if key in st.session_state:
                         del st.session_state[key]
-                st.experimental_rerun()
+
+                # On ne fait plus de st.experimental_rerun() ici ; on laisse le rechargement automatique se faire au prochain clic
 
     st.markdown("---")
 
@@ -1021,7 +1047,7 @@ elif section == "Mes recettes":
             for idx, col in enumerate(cols):
                 if i + idx < len(df_recettes):
                     row = df_recettes.iloc[i + idx]
-                    recipe_id = row["id"]
+                    rcp_id = row["id"]
                     recipe_name = row["name"]
                     image_url = row["image_url"] or "https://via.placeholder.com/300x180.png?text=Pas+d%27image"
                     ingrédients = parse_ingredients(row["ingredients"])
@@ -1079,8 +1105,7 @@ elif section == "Planificateur":
             df_plan = df_plan[df_plan["Recipe"] != ""].reset_index(drop=True)
             upsert_mealplan(USER_ID, df_plan)
             st.success("✅ Planning de la semaine enregistré.")
-            st.experimental_rerun()
-
+            # Pas de rerun forcé ; Streamlit affiche automatiquement la table ci-dessous
     st.markdown("---")
     st.write("### 🏠 Votre planning actuel")
     df_current_plan = get_mealplan_for_user(USER_ID)
@@ -1197,11 +1222,23 @@ else:  # section == "Profil"
         st.subheader("Composition de la famille")
         colA, colB, colC = st.columns(3)
         with colA:
-            num_adults = st.number_input("Adultes :", min_value=0, max_value=10, step=1, value=adults_default if household_default == "Famille" else 0)
+            num_adults = st.number_input(
+                "Adultes :", 
+                min_value=0, max_value=10, step=1, 
+                value=adults_default if household_default == "Famille" else 0
+            )
         with colB:
-            num_adolescents = st.number_input("Adolescents :", min_value=0, max_value=10, step=1, value=adolescents_default if household_default == "Famille" else 0)
+            num_adolescents = st.number_input(
+                "Adolescents :", 
+                min_value=0, max_value=10, step=1, 
+                value=adolescents_default if household_default == "Famille" else 0
+            )
         with colC:
-            num_children = st.number_input("Enfants :", min_value=0, max_value=10, step=1, value=children_default if household_default == "Famille" else 0)
+            num_children = st.number_input(
+                "Enfants :", 
+                min_value=0, max_value=10, step=1, 
+                value=children_default if household_default == "Famille" else 0
+            )
     else:
         num_adults = 1 if household == "Solo" else 2
         num_adolescents = 0
@@ -1219,4 +1256,5 @@ else:  # section == "Profil"
             }
         )
         st.success("✅ Profil mis à jour.")
-        st.experimental_rerun()
+        # Le rerun se fait tout seul au prochain clic utilisateur
+
