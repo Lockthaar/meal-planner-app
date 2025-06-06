@@ -449,16 +449,18 @@ def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
     conn = get_connection()
     cursor = conn.cursor()
 
-    # 1) On supprime l’ancien planning
+    # 1) Supprime l’ancien planning
     cursor.execute("DELETE FROM mealplans WHERE user_id = ?", (user_id,))
     conn.commit()
 
-    # 2) On réinsère chaque ligne du DataFrame
+    # 2) Réinsère chaque ligne du DataFrame
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for _, row in plan_df.iterrows():
         cursor.execute(
-            # REMARQUE : on a retiré le point-virgule final pour éviter l’erreur OperationalError
-            "INSERT INTO mealplans(user_id, day, meal, recipe_name, timestamp) VALUES(?, ?, ?, ?, ?)",
+            """
+            INSERT INTO mealplans(user_id, day, meal, recipe_name, timestamp) 
+            VALUES(?, ?, ?, ?, ?)
+            """,
             (user_id, row["Day"], row["Meal"], row["Recipe"], now_str)
         )
     conn.commit()
@@ -501,7 +503,10 @@ if "user_id" not in st.session_state:
 if "username" not in st.session_state:
     st.session_state.username = ""
 if "onboard_step" not in st.session_state:
-    # 0 = avant connexion, 1 = choisir foyer, 2 = nombre repas/jour, 3 = prêt pour le contenu principal
+    # 0 = avant connexion, 
+    # 1 = choisir “Solo/Couple/Famille”, 
+    # 2 = nombre de repas/jour, 
+    # 3 = prêt pour le contenu principal
     st.session_state.onboard_step = 0
 if "household_type" not in st.session_state:
     st.session_state.household_type = None
@@ -512,8 +517,10 @@ if "meals_per_day" not in st.session_state:
 def show_login_page() -> None:
     """
     Affiche le formulaire de connexion/inscription.
-    Si l’utilisateur se connecte avec succès, on définit st.session_state.user_id 
-    et on met à jour onboard_step selon le profil existant, puis on rafraîchit immédiatement.
+    Lors d’un login réussi, on remplit user_id + username + onboard_step,
+    puis on retourne (sans appeler st.experimental_rerun()) : 
+    la relance automatique de Streamlit va prendre en compte user_id et passer 
+    au reste du code (onboarding ou contenu principal).
     """
     st.subheader("🔒 Connexion / Inscription")
     tab1, tab2 = st.tabs(["🔐 Connexion", "✍️ Inscription"])
@@ -536,7 +543,7 @@ def show_login_page() -> None:
             if login_submit:
                 uid = verify_user(login_user.strip(), login_pwd)
                 if uid:
-                    # Connexion OK : on stocke user_id + username
+                    # Connexion OK : on met à jour la session
                     st.session_state.user_id = uid
                     st.session_state.username = login_user.strip()
                     # On regarde si l’utilisateur a déjà rempli son profil
@@ -545,8 +552,9 @@ def show_login_page() -> None:
                         st.session_state.onboard_step = 1
                     else:
                         st.session_state.onboard_step = 3
-                    # Rafraîchit tout de suite pour passer à l’onboarding ou au contenu principal
-                    st.experimental_rerun()
+                    # On affiche un message de succès, puis on sort de la fonction.
+                    st.success(f"✅ Bienvenue, **{login_user.strip()}** !")
+                    return
                 else:
                     st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
@@ -584,14 +592,15 @@ def show_login_page() -> None:
                         st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà.")
 
 
-# Si l’utilisateur n’est pas connecté, on affiche le login/inscription et on arrête.
+# Si l’utilisateur n’est pas connecté, on affiche le login/inscription, puis on arrête.
 if st.session_state.user_id is None:
     show_login_page()
     st.stop()
 
 
 # À partir d’ici, st.session_state.user_id est défini (login réussi).
-# On vérifie la clé onboard_step pour savoir si on fait l’onboarding ou directement le contenu.
+# → On bascule dans “onboarding” (si user n’a pas encore ses champs profil en base),
+#    ou directement dans “contenu principal” si le profil est déjà rempli.
 
 # --- Étape 1 : Choisir le foyer (UNE SEULE FOIS, à la toute première connexion) ---
 if st.session_state.onboard_step == 1:
@@ -603,20 +612,20 @@ if st.session_state.onboard_step == 1:
         if st.button("Solo", key="btn_solo", use_container_width=True):
             st.session_state.household_type = "Solo"
             st.session_state.onboard_step = 2
-            st.experimental_rerun()
+            return  # Le script se relancera automatiquement après le clic
     with col2:
         if st.button("Couple", key="btn_couple", use_container_width=True):
             st.session_state.household_type = "Couple"
             st.session_state.onboard_step = 2
-            st.experimental_rerun()
+            return
     with col3:
         if st.button("Famille", key="btn_family", use_container_width=True):
             st.session_state.household_type = "Famille"
             st.session_state.onboard_step = 2
-            st.experimental_rerun()
+            return
     st.stop()
 
-# --- Étape 2 : Nombre de repas / jour (UNE SEULE FOIS, juste après le choix foyer) ---
+# --- Étape 2 : Combien de repas par jour ? (UNE SEULE FOIS, juste après le choix foyer) ---
 elif st.session_state.onboard_step == 2:
     st.markdown("---")
     st.header("🍽️ Combien de repas par jour préparez-vous ?")
@@ -647,15 +656,14 @@ elif st.session_state.onboard_step == 2:
                 "num_adults": num_adults
             }
         )
-        # On passe à l’étape “Contenu principal” (= 3) et on réexécute
         st.session_state.onboard_step = 3
-        st.experimental_rerun()
+        return  # Le script se relancera automatiquement
 
     st.stop()
 
-# À ce stade, on a soit déjà fait le onboarding (onboard_step >= 3), soit on n’y est jamais passé avant,
-# et on l’affiche exactement une fois. Ensuite, on n’y revient jamais.
-# st.session_state.onboard_step >= 3  ⇒  on affiche le contenu principal.
+# À ce stade, soit l’onboarding (étapes 1 et 2) est terminé, 
+# soit l’utilisateur était déjà onboarding. => st.session_state.onboard_step >= 3 
+# alors on passe à la partie “contenu principal”.
 
 
 # -------------------------------------------------------------------------------
@@ -672,7 +680,7 @@ with st.sidebar:
     st.write(f"🏠 Foyer : {profil.get('household_type', '–')}")
     st.write(f"🍽️ Repas/jour : {profil.get('meals_per_day', '–')}")
     if st.button("🔓 Se déconnecter", use_container_width=True):
-        # On efface toutes les clés de session et on rerun pour retourner à la page login
+        # On efface toutes les clés de session et on relance pour revenir au login
         for key in ["user_id", "username", "onboard_step", "household_type", "meals_per_day"]:
             if key in st.session_state:
                 del st.session_state[key]
@@ -746,7 +754,7 @@ elif section == "Mes recettes":
     st.header("📋 Mes recettes")
     st.markdown("Ajoutez, consultez, modifiez ou supprimez vos recettes personnelles.")
 
-    # On affiche d’abord le formulaire “Ajouter / Modifier une recette”
+    # -------- Module 1 : Ajouter / Modifier une recette --------
     with st.expander("➕ Ajouter / Modifier une recette", expanded=True):
         df_recettes = get_recipes_for_user(USER_ID)
         all_names = df_recettes["name"].tolist()
@@ -778,7 +786,7 @@ elif section == "Mes recettes":
         st.markdown("**Ingrédients**")
         ing_mode = st.radio("Mode d’ajout des ingrédients", ("Saisie manuelle", "Importer depuis texte"), index=0, horizontal=True)
 
-        # Réinit de ing_count si on change de recette
+        # Réinitialisation du compteur de lignes d’ingrédients si on change de recette
         if "ing_count" not in st.session_state or recipe_id is not None:
             st.session_state.ing_count = len(default_ing) if default_ing else 1
 
@@ -843,19 +851,19 @@ elif section == "Mes recettes":
                 extras_json = ""  # On enregistre d'abord la recette sans extras
                 if recipe_id:
                     update_recipe(recipe_id, name.strip(), image_url.strip(), ing_json, instructions.strip(), extras_json)
-                    st.success(f"✅ Recette « {name.strip()} » mise à jour (sans extras pour l’instant).")
+                    st.success(f"✅ Recette « {name.strip()} » mise à jour (sans extras).")
                 else:
                     insert_recipe(USER_ID, name.strip(), image_url.strip(), ing_json, instructions.strip(), extras_json)
-                    st.success(f"✅ Recette « {name.strip()} » ajoutée (sans extras pour l’instant).")
+                    st.success(f"✅ Recette « {name.strip()} » ajoutée (sans extras).")
 
-                # Réinitialise ing_count et import_ing_text pour le cas d’une nouvelle saisie
+                # Réinitialise ing_count et import_ing_text
                 for key in ["ing_count", "import_ing_text"]:
                     if key in st.session_state:
                         del st.session_state[key]
 
     st.markdown("---")
 
-    # --- Deuxième module : "Vos extras pour la maison" ---
+    # -------- Module 2 : “Vos extras pour la maison” --------
     with st.expander("🏠 Vos extras pour la maison", expanded=False):
         st.write("Ajoutez ici vos extras (boissons, produits maison, plantes, animaux) pour accompagner vos recettes.")
         df_recettes = get_recipes_for_user(USER_ID)
@@ -877,14 +885,14 @@ elif section == "Mes recettes":
             else:
                 st.info("Aucun extra saisi pour cette recette.")
 
-            # On propose d’ajouter/éditer des extras
+            # Bouton pour ajouter un champ d’extra
             if "extra_count" not in st.session_state or existing_extras:
                 st.session_state.extra_count = len(existing_extras) if existing_extras else 1
 
-            extras_list = []
             if st.button("➕ Ajouter un champ d’extra", key="add_extra"):
                 st.session_state.extra_count += 1
 
+            extras_list = []
             for j in range(st.session_state.extra_count):
                 cat_default = existing_extras[j]["category"] if j < len(existing_extras) else "Boissons"
                 item_default = existing_extras[j]["item"] if j < len(existing_extras) else ""
@@ -923,10 +931,10 @@ elif section == "Mes recettes":
                 })
 
             if st.button("💾 Enregistrer les extras", key="save_extras", use_container_width=True):
-                # On transforme en JSON puis on met à jour la colonne extras_json de la recette correspondante
+                # On filtre les extras valides et on met à jour la colonne extras_json de la recette
                 valid_extras = [e for e in extras_list if e["item"].strip() and e["quantity"] > 0]
                 extras_json_to_save = json.dumps(valid_extras, ensure_ascii=False)
-                # On met à jour la recette en gardant les autres champs inchangés
+
                 conn = get_connection()
                 cursor = conn.cursor()
                 cursor.execute(
@@ -936,10 +944,9 @@ elif section == "Mes recettes":
                 conn.commit()
                 conn.close()
                 st.success(f"✅ Extras mis à jour pour la recette « {choix_recette_extra} ».")
-                # On conserve le JSON en session_state pour afficher la prochaine fois
-                for key in ["extra_count"]:
-                    if key in st.session_state:
-                        del st.session_state[key]
+                # On réinitialise extra_count
+                if "extra_count" in st.session_state:
+                    del st.session_state["extra_count"]
 
     st.markdown("---")
 
@@ -970,7 +977,7 @@ elif section == "Mes recettes":
                                 </div>
                                 <div class="recipe-card-buttons">
                                     <button onclick="alert('Affichage détails non implémenté')">Voir</button>
-                                    <button onclick="alert('Pour modifier : réouvrez ce module et sélectionnez la recette')">Modifier</button>
+                                    <button onclick="alert('Pour modifier : ré-ouvrez le module ci-dessus et sélectionnez la recette')">Modifier</button>
                                 </div>
                               </div>
                             </div>
@@ -1007,7 +1014,7 @@ elif section == "Planificateur":
 
         if st.form_submit_button("💾 Enregistrer le planning", use_container_width=True):
             df_plan = pd.DataFrame(selections, columns=["Day", "Meal", "Recipe"])
-            # On ne garde que les lignes où "Recipe" n'est pas vide
+            # On ne garde que les lignes où “Recipe” n’est pas vide
             df_plan = df_plan[df_plan["Recipe"] != ""].reset_index(drop=True)
 
             try:
