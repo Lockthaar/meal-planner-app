@@ -1,8 +1,7 @@
-# ---------------------------------------
-# app.py – Batchist (Meal Planner & Batch Cooking)
-# ---------------------------------------
+# ---------------------------------------------------------------------
+# app.py – Batchist : Meal Planner & Batch Cooking (Streamlit Cloud)
+# ---------------------------------------------------------------------
 
-import os
 import sqlite3
 import streamlit as st
 import pandas as pd
@@ -10,18 +9,14 @@ import json
 from collections import defaultdict
 from typing import Optional
 import io
-from datetime import datetime, timedelta
+from datetime import datetime
+import time
 
-# -------------------------------------------------------------------
-# 1) ON SUPPRIME L’ANCIEN FICHIER SQLite (s’il existe) pour repartir "from scratch"
-# -------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 1) DATABASE INITIALIZATION
+# ---------------------------------------------------------------------
 DB_PATH = "meal_planner.db"
-if os.path.exists(DB_PATH):
-    os.remove(DB_PATH)
 
-# -------------------------------------------------------------------
-# 2) FONCTIONS DE CRÉATION / INITIALISATION DES TABLES
-# -------------------------------------------------------------------
 def get_connection():
     """
     Ouvre ou crée la base SQLite meal_planner.db.
@@ -31,21 +26,15 @@ def get_connection():
 
 def init_db():
     """
-    1) DROP des anciennes tables (s’il en reste).
-    2) CREATE TABLE users, recipes, mealplans avec le schéma attendu.
+    Vérifie / crée les tables users, recipes, mealplans (CREATE TABLE IF NOT EXISTS).
+    Ne supprime jamais de tables existantes : on conserve les données entre redéploiements.
     """
     conn = get_connection()
     cursor = conn.cursor()
 
-    # 2.1) Suppression des anciennes tables
-    cursor.execute("DROP TABLE IF EXISTS users")
-    cursor.execute("DROP TABLE IF EXISTS recipes")
-    cursor.execute("DROP TABLE IF EXISTS mealplans")
-    conn.commit()
-
-    # 2.2) Création de la table users
+    # Table "users"
     cursor.execute("""
-        CREATE TABLE users (
+        CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
@@ -58,9 +47,9 @@ def init_db():
     """)
     conn.commit()
 
-    # 2.3) Création de la table recipes
+    # Table "recipes"
     cursor.execute("""
-        CREATE TABLE recipes (
+        CREATE TABLE IF NOT EXISTS recipes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
@@ -68,37 +57,38 @@ def init_db():
             instructions TEXT,
             image_url TEXT,
             extras_json TEXT,
-            FOREIGN KEY(user_id) REFERENCES users(id)
+            FOREIGN KEY (user_id) REFERENCES users(id)
         )
     """)
     conn.commit()
 
-    # 2.4) Création de la table mealplans
+    # Table "mealplans"
     cursor.execute("""
-        CREATE TABLE mealplans (
+        CREATE TABLE IF NOT EXISTS mealplans (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             day TEXT NOT NULL,
             meal TEXT NOT NULL,
             recipe_name TEXT NOT NULL,
             timestamp TEXT NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id)
+            FOREIGN KEY (user_id) REFERENCES users(id)
         )
     """)
     conn.commit()
 
     conn.close()
-    print("✅ init_db() exécuté : tables créées à neuf.")
+    print("✅ init_db() exécuté (tables créées si nécessaire).")
 
-# Appel immédiat pour recréer les tables
+# Appel immédiat (sera silencieux si les tables existent déjà)
 init_db()
 
-# -------------------------------------------------------------------
-# 3) FONCTIONS CRUD (Users, Recipes, Mealplans)
-# -------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 2) FONCTIONS CRUD POUR SQLITE
+# ---------------------------------------------------------------------
 def add_user(username: str, password: str) -> bool:
     """
-    Tente d’ajouter un nouvel utilisateur. Renvoie True si OK, False sinon.
+    Ajoute un nouvel utilisateur en base.
+    Retourne True si OK, False si l’username existe déjà (IntegrityError) ou erreur SQLite.
     """
     try:
         conn = get_connection()
@@ -111,7 +101,6 @@ def add_user(username: str, password: str) -> bool:
         conn.close()
         return True
     except sqlite3.IntegrityError:
-        # Le username existe déjà
         return False
     except sqlite3.OperationalError as e:
         st.error(f"⚠️ SQLite error dans add_user(): {e}")
@@ -119,7 +108,7 @@ def add_user(username: str, password: str) -> bool:
 
 def verify_user(username: str, password: str) -> Optional[int]:
     """
-    Vérifie si (username,password) existe dans users. Renvoie user_id ou None.
+    Vérifie l’existence de (username, password). Si trouvé, retourne l’ID de l’utilisateur, sinon None.
     """
     try:
         conn = get_connection()
@@ -139,7 +128,7 @@ def verify_user(username: str, password: str) -> Optional[int]:
 
 def get_user_profile(user_id: int) -> dict:
     """
-    Récupère les champs profil (household_type, meals_per_day, num_children, num_adolescents, num_adults).
+    Récupère le profil (household_type, meals_per_day, num_children, num_adolescents, num_adults).
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -161,7 +150,7 @@ def get_user_profile(user_id: int) -> dict:
 
 def update_user_profile(user_id: int, profile: dict):
     """
-    Met à jour la ligne users pour user_id avec les données du dict profile.
+    Met à jour les colonnes profil de l’utilisateur (household_type, meals_per_day, etc.).
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -182,7 +171,7 @@ def update_user_profile(user_id: int, profile: dict):
 
 def get_recipes_for_user(user_id: int) -> pd.DataFrame:
     """
-    Retourne un DataFrame de toutes les recettes pour user_id.
+    Renvoie un DataFrame de toutes les recettes pour cet user_id.
     Colonnes : id, name, image_url, ingredients, instructions, extras_json.
     """
     conn = get_connection()
@@ -197,7 +186,7 @@ def get_recipes_for_user(user_id: int) -> pd.DataFrame:
 def insert_recipe(user_id: int, name: str, image_url: str, ingredients_json: str,
                   instructions: str, extras_json: str):
     """
-    Insère une nouvelle recette pour cet utilisateur.
+    Ajoute une nouvelle recette pour l’utilisateur donné.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -211,7 +200,7 @@ def insert_recipe(user_id: int, name: str, image_url: str, ingredients_json: str
 def update_recipe(recipe_id: int, name: str, image_url: str, ingredients_json: str,
                   instructions: str, extras_json: str):
     """
-    Met à jour la recette spécifiée par recipe_id.
+    Met à jour une recette existante identifiée par recipe_id.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -225,7 +214,7 @@ def update_recipe(recipe_id: int, name: str, image_url: str, ingredients_json: s
 
 def delete_recipe(recipe_id: int):
     """
-    Supprime la recette dont l’id est passé en paramètre.
+    Supprime la recette dont l’ID est passé en paramètre.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -235,7 +224,7 @@ def delete_recipe(recipe_id: int):
 
 def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
     """
-    Retourne le planning (id, day, meal, recipe_name, timestamp) pour user_id.
+    Renvoie un DataFrame du planning (id, day, meal, recipe_name, timestamp) pour user_id.
     """
     conn = get_connection()
     df = pd.read_sql_query(
@@ -248,7 +237,8 @@ def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
 
 def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
     """
-    Remplace (DELETE + INSERT) tout le planning pour user_id, en ajoutant un champ timestamp.
+    Remplace (DELETE puis INSERT) tout le planning pour user_id.
+    Ajoute la date/heure d’insertion dans le champ timestamp.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -265,8 +255,8 @@ def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
 
 def parse_ingredients(ing_str: str) -> list:
     """
-    Convertit la chaîne JSON (stockée dans 'ingredients') en liste de dicts.
-    Chaque dict = { "ingredient": str, "quantity": float, "unit": str }.
+    Transforme la chaîne JSON stockée dans 'ingredients' en liste de dicts 
+    [{ "ingredient": ..., "quantity": ..., "unit": ... }, ...].
     """
     try:
         return json.loads(ing_str)
@@ -275,17 +265,17 @@ def parse_ingredients(ing_str: str) -> list:
 
 def parse_extras(extras_str: str) -> list:
     """
-    Convertit la chaîne JSON (stockée dans 'extras_json') en liste de dicts.
-    Chaque dict = { "category": str, "item": str, "quantity": float, "unit": str }.
+    Transforme la chaîne JSON stockée dans 'extras_json' en liste de dicts 
+    [{ "category": ..., "item": ..., "quantity": ..., "unit": ... }, ...].
     """
     try:
         return json.loads(extras_str)
     except:
         return []
 
-# -------------------------------------------------------------------
-# 4) SETUP GLOBAL STREAMLIT (CSS + PAGE CONFIG)
-# -------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 3) CONFIGURATION GLOBALE STREAMLIT (CSS + PAGE CONFIG)
+# ---------------------------------------------------------------------
 st.set_page_config(
     page_title="Batchist: Meal Planner & Batch Cooking",
     page_icon="🥘",
@@ -317,20 +307,27 @@ st.markdown(
             align-items: center;
             justify-content: space-between;
         }
-        .header-logo img { width: 40px; height: 40px; }
-        .nav-item { margin-left: 20px; font-weight: 500; cursor: pointer; color: #333; }
+        .header-logo img { width: 36px; height: 36px; margin-right: 8px; vertical-align: middle; }
+        .header-logo span { font-size: 1.5rem; font-weight: 700; color: #333; vertical-align: middle; }
+        .nav-item {
+            margin-left: 20px;
+            font-weight: 500;
+            cursor: pointer;
+            color: #333;
+            font-size: 1rem;
+        }
         .nav-item:hover { color: #FFA500; }
 
-        /* POUR ÉVITER DE CACHER LE CONTENU DERRIÈRE LA NAVBAR */
-        .streamlit-container { padding-top: 100px !important; }
+        /* Evite que le contenu soit caché par la navbar */
+        .streamlit-container { padding-top: 80px !important; }
 
-        /* HERO (BANNIÈRE EN HAUT) */
+        /* HERO (BANNIÈRE) */
         .hero {
             position: relative;
             width: 100%;
-            height: 300px;
-            background: url('https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1200&q=80') no-repeat center center / cover;
-            margin-bottom: 40px;
+            height: 280px;
+            background: url('https://images.unsplash.com/photo-1565895405132-ac3e0ffb5e15?auto=format&fit=crop&w=1200&q=80') no-repeat center center / cover;
+            margin-bottom: 32px;
             color: white;
         }
         .hero-overlay {
@@ -341,7 +338,7 @@ st.markdown(
             position: relative; z-index: 1;
             text-align: center; top: 50%; transform: translateY(-50%);
         }
-        .hero-text h1 { font-size: 3rem; margin-bottom: 10px; }
+        .hero-text h1 { font-size: 3rem; margin-bottom: 8px; }
         .hero-text p { font-size: 1.2rem; opacity: 0.9; }
 
         /* MODALE (POP-UP ONBOARDING) */
@@ -355,7 +352,7 @@ st.markdown(
             position: fixed; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
             background: white; padding: 30px; border-radius: 8px;
-            max-width: 450px; width: 90%;
+            max-width: 400px; width: 90%;
             box-shadow: 0 4px 20px rgba(0,0,0,0.2);
             z-index: 1002;
         }
@@ -369,21 +366,33 @@ st.markdown(
             cursor: pointer;
         }
         .modal-close:hover { color: #333; }
+
+        /* Style des boutons de carte recette */
+        .btn-share, .btn-delete {
+            padding: 5px 10px;
+            border: none;
+            border-radius: 4px;
+            color: white;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+        .btn-share { background-color: #FFA500; margin-right: 8px; }
+        .btn-delete { background-color: #D32F2F; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# -------------------------------------------------------------------
-# 5) NAVBAR + HERO (HTML PUR)
-# -------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 4) BARRE DE NAVIGATION HTML + HERO
+# ---------------------------------------------------------------------
 st.markdown(
     """
     <div class="header">
       <div class="header-content">
         <div class="header-logo">
           <img src="https://img.icons8.com/fluency/48/000000/cutlery.png" alt="logo">
-          <span style="font-size:1.5rem; font-weight:700; color:#333;">Batchist</span>
+          <span>Batchist</span>
         </div>
         <div>
           <span class="nav-item" onclick="window.location.hash='#home'">Accueil</span>
@@ -393,12 +402,14 @@ st.markdown(
           <span class="nav-item" onclick="window.location.hash='#tips'">Conseils</span>
           <span class="nav-item" onclick="window.location.hash='#profile'">Profil</span>
         </div>
+        <div id="clock" style="font-size:0.95rem; color:#333;"></div>
       </div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
+# Hero (bannière)
 st.markdown(
     """
     <div id="home" class="hero">
@@ -412,9 +423,30 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# -------------------------------------------------------------------
-# 6) AUTHENTIFICATION + ONBOARDING
-# -------------------------------------------------------------------
+# Script JavaScript pour afficher l’heure en temps réel
+st.markdown(
+    """
+    <script>
+    function updateClock() {
+        const now = new Date();
+        let h = now.getHours();
+        let m = now.getMinutes();
+        let s = now.getSeconds();
+        if (h<10) h='0'+h;
+        if (m<10) m='0'+m;
+        if (s<10) s='0'+s;
+        document.getElementById('clock').innerText = `🕒 ${h}:${m}:${s}`;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+    </script>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------------------------------------------------------------------
+# 5) AUTHENTIFICATION + ONBOARDING POP-UPS
+# ---------------------------------------------------------------------
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "username" not in st.session_state:
@@ -428,8 +460,9 @@ if "meals_per_day" not in st.session_state:
 
 def show_login_page():
     """
-    Affiche les onglets Connexion / Inscription (avec st.form) pour gérer la connexion/inscription.
+    Affiche la page Connexion / Inscription tant que l’utilisateur n’est pas connecté.
     """
+    st.markdown('<div id="home"></div>', unsafe_allow_html=True)
     st.subheader("🔒 Connexion / Inscription")
     tab1, tab2 = st.tabs(["🔐 Connexion", "✍️ Inscription"])
 
@@ -447,7 +480,7 @@ def show_login_page():
                     st.session_state.username = login_user.strip()
                     st.success(f"Bienvenue, **{login_user.strip()}** !")
                     profile = get_user_profile(uid)
-                    # Si pas encore d'infos de foyer ou repas, on lance l'onboarding
+                    # Si l’utilisateur n’a pas encore de profil complet, on déclenche l’onboarding
                     if not profile.get("household_type") or not profile.get("meals_per_day"):
                         st.session_state.onboard_step = 1
                     else:
@@ -476,16 +509,15 @@ def show_login_page():
                     else:
                         st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà ou erreur SQLite.")
 
-# Tant que user_id n’est pas défini, on s’arrête ici après avoir affiché le login/inscription
+# Tant que l’utilisateur n’est pas connecté, on n’avance pas plus loin
 if st.session_state.user_id is None:
     show_login_page()
     st.stop()
 
-# -------------------------------------------------------------------
-# 6.1) ONBOARDING (étapes 1, 2, 3)
-# -------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 5.1) ONBOARDING – Étape 1 : « Comment vivez-vous ? »
+# ---------------------------------------------------------------------
 if st.session_state.onboard_step == 1:
-    # Pop-up “Comment vivez-vous ?”
     st.markdown('<div class="modal-background"></div>', unsafe_allow_html=True)
     st.markdown(
         """
@@ -494,9 +526,8 @@ if st.session_state.onboard_step == 1:
           <div class="modal-title">Comment vivez-vous ?</div>
         </div>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
-    # JS pour que la croix LOade un paramètre closeOnboarding=1 et provoque reload
     st.markdown(
         """
         <script>
@@ -508,9 +539,8 @@ if st.session_state.onboard_step == 1:
         }
         </script>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
-
     col1, col2, col3 = st.columns(3, gap="small")
     with col1:
         if st.button("Solo", key="btn_solo", use_container_width=True):
@@ -518,7 +548,7 @@ if st.session_state.onboard_step == 1:
             st.session_state.onboard_step = 2
             st.experimental_rerun()
         st.markdown(
-            '<div style="text-align:center; margin-top:5px;">'
+            '<div style="text-align:center; margin-top:8px;">'
             '<img src="https://img.icons8.com/dusk/100/000000/user.png" alt="solo"/></div>',
             unsafe_allow_html=True
         )
@@ -528,7 +558,7 @@ if st.session_state.onboard_step == 1:
             st.session_state.onboard_step = 2
             st.experimental_rerun()
         st.markdown(
-            '<div style="text-align:center; margin-top:5px;">'
+            '<div style="text-align:center; margin-top:8px;">'
             '<img src="https://img.icons8.com/dusk/100/000000/couple.png" alt="couple"/></div>',
             unsafe_allow_html=True
         )
@@ -538,20 +568,23 @@ if st.session_state.onboard_step == 1:
             st.session_state.onboard_step = 2
             st.experimental_rerun()
         st.markdown(
-            '<div style="text-align:center; margin-top:5px;">'
+            '<div style="text-align:center; margin-top:8px;">'
             '<img src="https://img.icons8.com/dusk/100/000000/family.png" alt="famille"/></div>',
             unsafe_allow_html=True
         )
 
-    # Si l’utilisateur a cliqué sur la croix → closeOnboarding=1
+    # Si l’utilisateur clique sur la croix, on passe à la fin de l’onboarding (skip)
     if st.experimental_get_query_params().get("closeOnboarding"):
         st.session_state.onboard_step = 3
         st.experimental_set_query_params()
         st.experimental_rerun()
+
     st.stop()
 
+# ---------------------------------------------------------------------
+# 5.2) ONBOARDING – Étape 2 : « Combien de repas par jour ? »
+# ---------------------------------------------------------------------
 if st.session_state.onboard_step == 2:
-    # Pop-up “Combien de repas par jour ?”
     st.markdown('<div class="modal-background"></div>', unsafe_allow_html=True)
     st.markdown(
         """
@@ -560,7 +593,7 @@ if st.session_state.onboard_step == 2:
           <div class="modal-title">Combien de repas par jour préparez-vous ?</div>
         </div>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
     st.markdown(
         """
@@ -573,7 +606,7 @@ if st.session_state.onboard_step == 2:
         }
         </script>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
     meals_input = st.number_input(
@@ -582,21 +615,22 @@ if st.session_state.onboard_step == 2:
     )
     if st.button("Valider", key="btn_set_meals", use_container_width=True):
         st.session_state.meals_per_day = meals_input
+        # Par défaut : Solo → 1 adulte ; Couple → 2 adultes ; Famille → 2 adultes
         if st.session_state.household_type == "Solo":
-            num_adults, num_adolescents, num_children = 1, 0, 0
+            na, nadol, nenf = 1, 0, 0
         elif st.session_state.household_type == "Couple":
-            num_adults, num_adolescents, num_children = 2, 0, 0
+            na, nadol, nenf = 2, 0, 0
         else:
-            num_adults, num_adolescents, num_children = 2, 0, 0
+            na, nadol, nenf = 2, 0, 0
 
         update_user_profile(
             st.session_state.user_id,
             {
                 "household_type": st.session_state.household_type,
                 "meals_per_day": st.session_state.meals_per_day,
-                "num_children": num_children,
-                "num_adolescents": num_adolescents,
-                "num_adults": num_adults
+                "num_children": nenf,
+                "num_adolescents": nadol,
+                "num_adults": na
             }
         )
         st.session_state.onboard_step = 3
@@ -606,71 +640,81 @@ if st.session_state.onboard_step == 2:
         st.session_state.onboard_step = 3
         st.experimental_set_query_params()
         st.experimental_rerun()
+
     st.stop()
 
-# -------------------------------------------------------------------
-# 7) UTILISATEUR CONNECTÉ & ONBOARDÉ → CONTENU PRINCIPAL
-# -------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 6) UTILISATEUR CONNECTÉ & ONBOARDÉ → AFFICHAGE DU CONTENU PRINCIPAL
+# ---------------------------------------------------------------------
 USER_ID = st.session_state.user_id
 
-with st.sidebar:
-    st.markdown("---")
-    st.write(f"👤 **Utilisateur : {st.session_state.username}**")
-    profile = get_user_profile(USER_ID)
-    st.write(f"🏠 Foyer : {profile.get('household_type','–')}")
-    st.write(f"🍽️ Repas/jour : {profile.get('meals_per_day','–')}")
-    if st.button("🔓 Se déconnecter", use_container_width=True):
-        for key in ["user_id","username","onboard_step","household_type","meals_per_day"]:
-            if key in st.session_state:
-                del st.session_state[key]
+# Récupère une première fois le profil pour avoir household_type & meals_per_day
+profile = get_user_profile(USER_ID)
+
+# ---------------------------------------------------------------------
+# 6.1) MENU DE NAVIGATION (raccourcis en haut, au-dessus du contenu)
+# ---------------------------------------------------------------------
+# On « lit » window.location.hash pour démarrer sur la section correcte
+# mais on propose aussi un menu Streamlit classique sous forme de radio.
+hash_sel = st.experimental_get_query_params().get("selected")
+# Si on a un hash (#recipes, #planner, etc.), on l’interprète
+if st.experimental_get_query_params().get("selected") is None:
+    # Par défaut → Accueil
+    st.experimental_set_query_params(selected="Accueil")
+    current_section = "Accueil"
+else:
+    current_section = st.experimental_get_query_params()["selected"][0]
+
+# Barre horizontale de navigation (fallback en cas de click direct sur onglet)
+cols_menu = st.columns(6, gap="small")
+menu_items = ["Accueil","Mes recettes","Planificateur","Liste de courses","Conseils & Astuces","Profil"]
+for idx, item in enumerate(menu_items):
+    style = "font-weight:600; color:#FFA500;" if item == current_section else "color:#333;"
+    if cols_menu[idx].button(item, key=f"nav_{item}", help=f"Aller à {item}", args=None):
+        st.experimental_set_query_params(selected=item)
         st.experimental_rerun()
 
-    st.markdown("---")
-    st.write("🗂️ **Navigation :**")
-    section = st.radio(
-        label="Aller à …",
-        options=["Accueil","Mes recettes","Planificateur","Liste de courses","Conseils & Astuces","Profil"],
-        index=0
-    )
-    st.markdown("---")
-    st.info("💡 Commencez par créer vos recettes, planifiez vos repas et générez la liste de courses !")
+st.markdown("---")
 
-# — Accueil (Tableau de bord)
-if section == "Accueil":
+# ---------------------------------------------------------------------
+# 7) PAGE : Accueil (Dashboard + Favoris + Astuces)
+# ---------------------------------------------------------------------
+if current_section == "Accueil":
     st.markdown('<div id="home"></div>', unsafe_allow_html=True)
     st.header("🏠 Tableau de bord")
-    st.markdown("Vos repas préférés du mois dernier")
+    st.markdown("**Vos recettes favorites du mois dernier** & **Astuces rapides**")
+    st.markdown("")
 
+    # 7.1) SECTION FAVORIS
     df_plan = get_mealplan_for_user(USER_ID)
     if df_plan.empty:
         st.info("Vous n’avez pas encore planifié de repas.")
     else:
+        # Filtre le mois passé
         now = datetime.now()
-        one_month_ago = now - timedelta(days=30)
+        one_month_ago = now.replace(day=1)  # début du mois en cours → pour simplifier, on prend tous depuis début du mois
         df_plan["timestamp"] = pd.to_datetime(df_plan["timestamp"])
         df_last_month = df_plan[df_plan["timestamp"] >= one_month_ago]
         if df_last_month.empty:
-            st.info("Aucun repas planifié le mois dernier.")
+            st.info("Aucun repas planifié ce mois-ci.")
         else:
             favorites = df_last_month["recipe_name"].value_counts().head(6)
-            cols = st.columns(3, gap="medium")
+            st.subheader("💖 Recettes les plus planifiées ce mois")
+            cols_fav = st.columns(3, gap="large")
+            df_recettes = get_recipes_for_user(USER_ID)
             idx = 0
             for recipe_name, count in favorites.items():
-                df_rec = get_recipes_for_user(USER_ID)
-                img_url = df_rec[df_rec["name"] == recipe_name]["image_url"]
-                if not img_url.empty and img_url.values[0]:
-                    img = img_url.values[0]
-                else:
-                    img = "https://via.placeholder.com/300x180.png?text=No+Image"
-                with cols[idx % 3]:
+                img_row = df_recettes[df_recettes["name"] == recipe_name]["image_url"]
+                img = img_row.values[0] if (not img_row.empty and img_row.values[0]) else "https://via.placeholder.com/300x180.png?text=No+Image"
+                with cols_fav[idx % 3]:
                     st.markdown(
                         f"""
                         <div style="border:1px solid #ddd; border-radius:8px; overflow:hidden; margin-bottom:20px;">
-                          <img src="{img}" alt="{recipe_name}" style="width:100%; height:180px; object-fit:cover;">
-                          <div style="padding:10px;">
+                          <img src="{img}" alt="{recipe_name}" style="width:100%; height:160px; object-fit:cover;">
+                          <div style="padding:8px;">
                             <div style="font-weight:600; font-size:1.1rem;">{recipe_name}</div>
-                            <div style="font-size:0.9rem; color:#555; margin-top:5px;">
-                              Planifié {count} fois
+                            <div style="font-size:0.9rem; color:#555; margin-top:4px;">
+                              Planifiée {count} fois
                             </div>
                           </div>
                         </div>
@@ -679,29 +723,46 @@ if section == "Accueil":
                     )
                 idx += 1
 
-# — Mes recettes
-elif section == "Mes recettes":
+    st.markdown("---")
+
+    # 7.2) ASTUCES RAPIDES
+    st.subheader("💡 Astuces rapides pour votre batch cooking")
+    st.markdown("""
+    - **Planifiez à l’avance** : sélectionnez 3 à 5 recettes que vous pouvez préparer en grandes quantités.  
+    - **Optimisez les ingrédients** : achetez en vrac riz, pâtes, légumineuses, conservez en portions hermétiques.  
+    - **Variez vos assaisonnements** : base de protéines (poulet, tofu, œufs) : curry, teriyaki, épices mexicaines selon la journée.  
+    - **Congélation intelligente** : congelez en Portions individuelles pour décongeler rapidement.  
+    - **Nettoyage au fur et à mesure** : pendant que vos plats mijotent, profitez pour laver et ranger.  
+    - **Impliquer la famille** : attribuez des tâches simples (laver légumes, mélanger) pour rendre le batch cooking ludique.  
+    """)
+
+# ---------------------------------------------------------------------
+# 8) PAGE : Mes recettes (création, édition, suppression, cartes, partage)
+# ---------------------------------------------------------------------
+elif current_section == "Mes recettes":
     st.markdown('<div id="recipes"></div>', unsafe_allow_html=True)
     st.header("📋 Mes recettes")
-    st.markdown("Ajoutez, modifiez ou supprimez vos recettes.")
+    st.markdown("Ajoutez, modifiez ou supprimez vos recettes personnelles.")
 
     df_recettes = get_recipes_for_user(USER_ID)
     all_names = df_recettes["name"].tolist()
 
     with st.expander("➕ Ajouter / Modifier une recette", expanded=True):
+        # Choix de la recette à modifier (ou vide pour nouvelle)
         choice = st.selectbox(
             "Sélectionnez une recette à modifier (ou laissez vide pour nouvelle)",
             options=[""] + all_names
         )
 
+        # Si on modifie, on récupère les valeurs par défaut
         if choice:
-            rec_row = df_recettes[df_recettes["name"] == choice].iloc[0]
-            recipe_id = rec_row["id"]
-            default_name = rec_row["name"]
-            default_image = rec_row["image_url"] or ""
-            default_ing = parse_ingredients(rec_row["ingredients"])
-            default_instr = rec_row["instructions"] or ""
-            default_extras = parse_extras(rec_row["extras_json"] or "[]")
+            row = df_recettes[df_recettes["name"] == choice].iloc[0]
+            recipe_id = row["id"]
+            default_name = row["name"]
+            default_image = row["image_url"] or ""
+            default_ing = parse_ingredients(row["ingredients"])
+            default_instr = row["instructions"] or ""
+            default_extras = parse_extras(row["extras_json"] or "[]")
         else:
             recipe_id = None
             default_name = ""
@@ -710,6 +771,7 @@ elif section == "Mes recettes":
             default_instr = ""
             default_extras = []
 
+        # Formulaire de la recette
         name = st.text_input("Nom de la recette", value=default_name, placeholder="Ex. : Gratin de légumes")
         image_url = st.text_input("URL de l’image (optionnelle)", value=default_image, placeholder="Ex. : https://…/image.jpg")
         instructions = st.text_area("Instructions (facultatif)", value=default_instr, placeholder="Décrivez la préparation…")
@@ -719,10 +781,10 @@ elif section == "Mes recettes":
         ingrédients_list = []
 
         if ing_mode == "Saisie manuelle":
-            count_default = len(default_ing) if default_ing else 1
+            # Nombre de lignes à afficher
             if "ing_count" not in st.session_state:
-                st.session_state.ing_count = count_default
-            if st.button("➕ Ajouter une ligne", key="add_ing_manu"):
+                st.session_state.ing_count = len(default_ing) if default_ing else 1
+            if st.button("➕ Ajouter une ligne", key="add_ing"):
                 st.session_state.ing_count += 1
 
             for i in range(st.session_state.ing_count):
@@ -763,7 +825,7 @@ elif section == "Mes recettes":
                             ingrédients_list.append((ingr, qty_val, unit))
                 st.markdown("**Aperçu des ingrédients importés :**")
                 if ingrédients_list:
-                    for ingr_i, qty_i, unit_i in ingrédients_list:
+                    for (ingr_i, qty_i, unit_i) in ingrédients_list:
                         st.write(f"- {ingr_i}: {qty_i} {unit_i}")
                 else:
                     st.warning("Aucun ingrédient valide détecté.")
@@ -823,57 +885,80 @@ elif section == "Mes recettes":
                 else:
                     insert_recipe(USER_ID, name.strip(), image_url.strip(), ing_json, instructions.strip(), extras_json)
                     st.success(f"✅ Recette « {name.strip()} » ajoutée.")
-                for key in ["ing_count","extra_count","import_ing_text"]:
+                # Réinitialiser les compteurs d’ingrédients extras
+                for key in ["ing_count", "extra_count", "import_ing_text"]:
                     if key in st.session_state:
                         del st.session_state[key]
                 st.experimental_rerun()
 
     st.markdown("---")
 
-    # Affichage des recettes sous forme de « cartes »
+    # Affichage des recettes sous forme de cartes
     df_recettes = get_recipes_for_user(USER_ID)
     if df_recettes.empty:
         st.info("Vous n’avez (encore) aucune recette.")
     else:
-        st.markdown("### 📖 Vos recettes")
+        st.subheader("📖 Vos recettes")
         cards_per_row = 3
         for i in range(0, len(df_recettes), cards_per_row):
             cols = st.columns(cards_per_row, gap="medium")
             for idx, col in enumerate(cols):
                 if i + idx < len(df_recettes):
                     row = df_recettes.iloc[i + idx]
-                    recipe_id = row["id"]
-                    recipe_name = row["name"]
-                    image_url = row["image_url"] or "https://via.placeholder.com/300x180.png?text=Pas+d%27image"
+                    rec_id = row["id"]
+                    rec_name = row["name"]
+                    rec_img = row["image_url"] or "https://via.placeholder.com/300x180.png?text=Pas+d%27image"
                     ingrédients = parse_ingredients(row["ingredients"])
                     with col:
                         st.markdown(
                             f"""
                             <div style="border:1px solid #ddd; border-radius:8px; overflow:hidden; margin-bottom:20px;">
-                              <img src="{image_url}" alt="{recipe_name}" style="width:100%; height:180px; object-fit:cover;">
+                              <img src="{rec_img}" alt="{rec_name}" style="width:100%; height:160px; object-fit:cover;">
                               <div style="padding:10px;">
-                                <div style="font-weight:600; font-size:1.1rem;">{recipe_name}</div>
+                                <div style="font-weight:600; font-size:1.1rem;">{rec_name}</div>
                                 <div style="font-size:0.9rem; color:#555; margin-top:5px;">
-                                    Ingrédients : {', '.join([ing['ingredient'] for ing in ingrédients][:3])}...
+                                  Ingrédients : {', '.join([ing['ingredient'] for ing in ingrédients][:3])}...
                                 </div>
                                 <div style="margin-top:10px;">
-                                    <button onclick="alert('Voir détails non implémenté')" style="margin-right:8px; padding:5px 10px;
-                                            background:#FFA500; border:none; border-radius:4px; color:white; cursor:pointer;">
-                                        Voir
-                                    </button>
-                                    <button onclick="alert('Pour modifier : sélectionnez la recette au-dessus')" style="padding:5px 10px;
-                                            background:#555; border:none; border-radius:4px; color:white; cursor:pointer;">
-                                        Modifier
-                                    </button>
+                                  <button class="btn-share" onclick="alert('Fonctionnalité partagée non implémentée')">Partager</button>
+                                  <button class="btn-delete" onclick="window._deleteRecipe({rec_id})">Supprimer</button>
                                 </div>
                               </div>
                             </div>
                             """,
                             unsafe_allow_html=True
                         )
+        # JS pour supprimer la recette directement depuis la carte
+        st.markdown(
+            """
+            <script>
+            window._deleteRecipe = function(recipe_id) {
+                const params = new URLSearchParams(window.location.search);
+                params.set("deleteRec", recipe_id);
+                window.history.replaceState(null, null, "?" + params.toString());
+                window.location.reload();
+            }
+            </script>
+            """,
+            unsafe_allow_html=True
+        )
+        # Si query param "deleteRec" est présent, on supprime la recette
+        delete_param = st.experimental_get_query_params().get("deleteRec")
+        if delete_param:
+            try:
+                rec_to_delete = int(delete_param[0])
+                delete_recipe(rec_to_delete)
+                # Nettoyage du param
+                st.experimental_set_query_params({})
+                st.success("✅ Recette supprimée.")
+                st.experimental_rerun()
+            except:
+                pass
 
-# — Planificateur
-elif section == "Planificateur":
+# ---------------------------------------------------------------------
+# 9) PAGE : Planificateur (sélection jour/repas/recette)
+# ---------------------------------------------------------------------
+elif current_section == "Planificateur":
     st.markdown('<div id="planner"></div>', unsafe_allow_html=True)
     st.header("📅 Planifier mes repas")
     st.markdown("Choisissez une recette pour chaque jour et chaque repas.")
@@ -885,17 +970,28 @@ elif section == "Planificateur":
     meals = ["Petit-déjeuner","Déjeuner","Dîner"]
 
     with st.form(key="plan_form", clear_on_submit=False):
-        cols = st.columns(3)
+        cols = st.columns(3, gap="large")
         selections = []
         for i, day in enumerate(days):
             col = cols[0] if i < 3 else (cols[1] if i < 6 else cols[2])
             with col:
                 st.subheader(f"🗓 {day}")
                 for meal in meals:
+                    key_name = f"{day}_{meal}"
+                    # Valeur par défaut = ce qui est déjà planifié (si existant)
+                    existing = get_mealplan_for_user(USER_ID)
+                    default_choice = ""
+                    if not existing.empty:
+                        filt = existing[
+                            (existing["day"] == day) & (existing["meal"] == meal)
+                        ]
+                        if not filt.empty:
+                            default_choice = filt.iloc[0]["recipe_name"]
                     recipe_choice = st.selectbox(
                         f"{meal} :",
                         choix_recettes,
-                        key=f"{day}_{meal}"
+                        key=key_name,
+                        index=choix_recettes.index(default_choice) if default_choice in choix_recettes else 0
                     )
                     selections.append((day, meal, recipe_choice))
 
@@ -918,11 +1014,13 @@ elif section == "Planificateur":
             )
         )
 
-# — Liste de courses
-elif section == "Liste de courses":
+# ---------------------------------------------------------------------
+# 10) PAGE : Liste de courses (automatique + téléchargeable)
+# ---------------------------------------------------------------------
+elif current_section == "Liste de courses":
     st.markdown('<div id="shopping"></div>', unsafe_allow_html=True)
     st.header("🛒 Liste de courses générée")
-    st.markdown("La liste est compilée automatiquement depuis votre planning.")
+    st.markdown("La liste est compilée automatiquement depuis votre planning et vos extras.")
 
     df_current_plan = get_mealplan_for_user(USER_ID)
     if df_current_plan.empty:
@@ -930,29 +1028,45 @@ elif section == "Liste de courses":
     else:
         total_ingredients = defaultdict(lambda: {"quantity": 0, "unit": ""})
         df_recettes = get_recipes_for_user(USER_ID)
+
+        # Parcours des recettes planifiées
         for _, row_plan in df_current_plan.iterrows():
             recette_name = row_plan["recipe_name"]
             row_rec = df_recettes[df_recettes["name"] == recette_name]
             if not row_rec.empty:
                 ing_list = parse_ingredients(row_rec.iloc[0]["ingredients"])
                 for ing in ing_list:
-                    clé = ing["ingredient"]
+                    key = ing["ingredient"]
                     qty = ing["quantity"]
                     unit = ing["unit"]
-                    if total_ingredients[clé]["unit"] and total_ingredients[clé]["unit"] != unit:
-                        st.warning(f"⚠️ Unité différente pour « {clé} », à vérifier.")
-                    total_ingredients[clé]["quantity"] += qty
-                    total_ingredients[clé]["unit"] = unit
+                    if total_ingredients[key]["unit"] and total_ingredients[key]["unit"] != unit:
+                        st.warning(f"⚠️ Unité différente pour « {key} » ; vérifiez manuellement.")
+                    total_ingredients[key]["quantity"] += qty
+                    total_ingredients[key]["unit"] = unit
+
+        # Ajout des extras de TOUTES les recettes
+        for _, row_rec in df_recettes.iterrows():
+            extras = parse_extras(row_rec["extras_json"] or "[]")
+            for e in extras:
+                cat = e["category"]
+                item = e["item"]
+                key = f"{cat} : {item}"
+                qty = e["quantity"]
+                unit = e["unit"]
+                if total_ingredients[key]["unit"] and total_ingredients[key]["unit"] != unit:
+                    st.warning(f"⚠️ Unité différente pour « {key} » ; vérifiez manuellement.")
+                total_ingredients[key]["quantity"] += qty
+                total_ingredients[key]["unit"] = unit
 
         shopping_data = [
-            {"Ingrédient": ing, "Quantité": vals["quantity"], "Unité": vals["unit"]}
+            {"Ingrédient / Extra": ing, "Quantité": vals["quantity"], "Unité": vals["unit"]}
             for ing, vals in total_ingredients.items()
         ]
         shopping_df = pd.DataFrame(shopping_data)
 
         st.table(shopping_df)
 
-        # Bouton pour télécharger en CSV
+        # Télécharger la liste au format CSV
         towrite = io.StringIO()
         shopping_df.to_csv(towrite, index=False, sep=";")
         towrite.seek(0)
@@ -963,44 +1077,49 @@ elif section == "Liste de courses":
             mime="text/csv",
         )
 
-# — Conseils & Astuces
-elif section == "Conseils & Astuces":
+# ---------------------------------------------------------------------
+# 11) PAGE : Conseils & Astuces (texte statique)
+# ---------------------------------------------------------------------
+elif current_section == "Conseils & Astuces":
     st.markdown('<div id="tips"></div>', unsafe_allow_html=True)
     st.header("💡 Conseils & Astuces sur le Batch Cooking")
     st.markdown("""
     **Bienvenue dans la section Astuces !**  
-    Découvrez des conseils pour optimiser votre batch cooking, gagner du temps et cuisiner savoureusement :
-    
-    1. **Planifiez vos menus à l'avance** :  
-       Sélectionnez 2 à 3 recettes par semaine que vous pouvez préparer en grande quantité.  
-    2. **Utilisez des contenants hermétiques** :  
-       Investissez dans des boîtes réutilisables et étiquetez-les.  
-    3. **Cuisinez des bases polyvalentes** :  
-       Riz, quinoa ou légumineuses préparées en grande quantité, pour accompagner plusieurs plats.  
-    4. **Congélation intelligente** :  
-       Portionnez vos plats avant de congeler pour décongeler rapidement.  
-    5. **Optimisez vos ingrédients frais** :  
-       Coupez vos légumes à l’avance, stockez-les dans des sacs hermétiques.  
-    6. **Variez les assaisonnements** :  
-       Base de protéines (poulet, tofu, œufs) assaisonnée différemment chaque jour (curry, teriyaki, épices mexicaines).  
-    7. **Surveillez les dates de péremption** :  
-       Étiquetez la date de préparation sur chaque boîte.  
-    8. **Impliquer toute la famille** :  
-       Attribuez des tâches simples aux enfants pour rendre le batch cooking ludique.  
-    9. **Réinventez vos restes** :  
-       Transformez les restes en lunch box (salade composée, wrap, omelette).  
-    10. **Nettoyage au fur et à mesure** :  
-       Pendant la cuisson, profitez des temps de pause pour nettoyer.  
+    Découvrez des conseils pour optimiser votre batch cooking et gagner du temps tout en mangeant sain :
 
-    Bon batch cooking !  
+    1. **Planifiez vos menus à l’avance** :  
+       Choisissez 3 à 5 recettes que vous pouvez préparer en une seule session.  
+    2. **Cuisinez des bases polyvalentes** :  
+       Préparez du riz, du quinoa ou des légumineuses en grande quantité pour accompagner plusieurs plats toute la semaine.  
+    3. **Congélation intelligente** :  
+       Portionnez vos repas en boîtes hermétiques afin de congeler au plus vite.  
+    4. **Optimisez vos ingrédients frais** :  
+       Coupez et rangez vos légumes dans des sachets hermétiques pour gagner du temps chaque jour.  
+    5. **Variez les assaisonnements** :  
+       Une même base protéinée (poulet, tofu, œufs) peut devenir curry, teriyaki ou épicée selon votre envie.  
+    6. **Nettoyage au fur et à mesure** :  
+       Pendant que vos plats cuisent, profitez-en pour laver et ranger vos ustensiles.  
+    7. **Impliquer toute la famille** :  
+       Attribuez des tâches simples (laver légumes, mélanger) pour rendre le batch cooking ludique.  
+    8. **Utilisez des boîtes réutilisables** :  
+       Privilégiez des boîtes hermétiques et étiquetez-les (date, contenu) pour éviter le gaspillage.  
+    9. **Réinventez vos restes** :  
+       Transformez vos restes en lunch box (salades composées, wraps, omelettes).  
+    10. **Planifiez vos collations** :  
+       Pensez à préparer des fruits coupés, des barres de céréales maison, ou des yaourts à emporter.  
+
+    > Bon batch cooking !  
     """)
 
-# — Profil
-else:  # section == "Profil"
+# ---------------------------------------------------------------------
+# 12) PAGE : Profil (modifier foyer, composition, repas/jour)
+# ---------------------------------------------------------------------
+else:  # current_section == "Profil"
     st.markdown('<div id="profile"></div>', unsafe_allow_html=True)
     st.header("👤 Profil utilisateur")
-    st.markdown("Modifiez vos infos de foyer et votre usage.")
+    st.markdown("Modifiez vos informations de foyer et vos préférences de repas.")
 
+    # Valeurs par défaut extraites de la base
     profile = get_user_profile(USER_ID)
     household_default = profile.get("household_type") or "Solo"
     meals_default = profile.get("meals_per_day") or 3
@@ -1016,17 +1135,17 @@ else:  # section == "Profil"
     )
 
     st.subheader("Nombre de repas par jour")
-    meals_per_day = st.number_input("Repas/jour :", min_value=1, max_value=10, step=1, value=meals_default)
+    meals_per_day = st.number_input("Repas/jour :", min_value=1, max_value=10, step=1, value=meals_default, key="profile_meals")
 
     if household == "Famille":
         st.subheader("Composition de la famille")
         colA, colB, colC = st.columns(3)
         with colA:
-            num_adults = st.number_input("Adultes :", min_value=0, max_value=10, step=1, value=adults_default if household_default == "Famille" else 0)
+            num_adults = st.number_input("Adultes :", min_value=0, max_value=10, step=1, value=adults_default if household_default == "Famille" else 0, key="profile_adults")
         with colB:
-            num_adolescents = st.number_input("Adolescents :", min_value=0, max_value=10, step=1, value=adolescents_default if household_default == "Famille" else 0)
+            num_adolescents = st.number_input("Adolescents :", min_value=0, max_value=10, step=1, value=adolescents_default if household_default == "Famille" else 0, key="profile_adolescents")
         with colC:
-            num_children = st.number_input("Enfants :", min_value=0, max_value=10, step=1, value=children_default if household_default == "Famille" else 0)
+            num_children = st.number_input("Enfants :", min_value=0, max_value=10, step=1, value=children_default if household_default == "Famille" else 0, key="profile_children")
     else:
         num_adults = 1 if household == "Solo" else 2
         num_adolescents = 0
