@@ -1,4 +1,10 @@
-# app.py
+# -------------------------------------------------------------------------------
+# app.py – Batchist : Meal Planner & Batch Cooking
+#
+# À chaque lancement, on supprime les anciennes tables pour repartir sur un schéma
+# tout neuf (DROP IF EXISTS), puis on les recrée (CREATE TABLE). Cela évite les
+# erreurs du type “no such column: password”.
+# -------------------------------------------------------------------------------
 
 import sqlite3
 import streamlit as st
@@ -10,35 +16,32 @@ import io
 from datetime import datetime, timedelta
 
 # -------------------------------------------------------------------------------
-# 1) ON FORCE LA SUPPRESSION DES ANCIENNES TABLES (DROP IF EXISTS)
-#    -->
-#    POUR REPARTIR SUR UN SCHÉMA PROPRE À CHAQUE DÉMARRAGE.
-#    Cela supprimera aussi tous les comptes/recettes existants lors du dev.
+# 1) INITIALISATION DE LA BASE DE DONNÉES (DROP + CREATE)
 # -------------------------------------------------------------------------------
 DB_PATH = "meal_planner.db"
 
 def get_connection():
     """
-    Ouvre ou crée le fichier SQLite meal_planner.db
+    Ouvre (ou crée) la base SQLite meal_planner.db.
     """
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     return conn
 
 def init_db():
     """
-    1) Supprime (DROP) les anciennes tables si elles existent
-    2) Recrée les tables users, recipes, mealplans avec le bon schéma
+    1) Supprime (DROP) les anciennes tables si elles existent (users, recipes, mealplans).
+    2) Recrée les tables avec le schéma attendu (incluant la colonne `password` dans users).
     """
     conn = get_connection()
     cursor = conn.cursor()
 
-    # 1.1) DROP des tables “users”, “recipes” et “mealplans” (s'il existe)
+    # 1.1) DROP des anciennes tables (s'il en reste)
     cursor.execute("DROP TABLE IF EXISTS users")
     cursor.execute("DROP TABLE IF EXISTS recipes")
     cursor.execute("DROP TABLE IF EXISTS mealplans")
     conn.commit()
 
-    # 1.2) CREATE TABLE users avec username + password + colonnes profil vides
+    # 1.2) CREATE TABLE users (avec username + password + colonnes profil)
     cursor.execute("""
         CREATE TABLE users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,16 +88,16 @@ def init_db():
     conn.close()
     print("✅ init_db() exécuté : tables recréées de zéro.")
 
-# On appelle init_db() impérativement dès que l’app démarre, avant toute logique Streamlit
+# Appel obligatoire avant toute instruction Streamlit
 init_db()
 
 # -------------------------------------------------------------------------------
-# 2) FONCTIONS CRUD (Users, Recipes, Mealplans)
+# 2) FONCTIONS CRUD POUR SQLITE
 # -------------------------------------------------------------------------------
 def add_user(username: str, password: str) -> bool:
     """
     Ajoute un nouvel utilisateur dans la table users.
-    Retourne True si OK, False si le username existe déjà ou erreur SQLite.
+    Renvoie True si succès, False si username déjà existant ou erreur SQLite.
     """
     try:
         conn = get_connection()
@@ -107,16 +110,17 @@ def add_user(username: str, password: str) -> bool:
         conn.close()
         return True
     except sqlite3.IntegrityError:
-        # username en double (contraint UNIQUE)
+        # Le username existe déjà (contraint UNIQUE)
         return False
     except sqlite3.OperationalError as e:
+        # Toute autre erreur SQLite (ex : table manquante, verrouillée, etc.)
         st.error(f"⚠️ SQLite error dans add_user(): {e}")
         return False
 
 def verify_user(username: str, password: str) -> Optional[int]:
     """
     Vérifie que (username, password) existe dans la table users.
-    Si oui, renvoie user_id. Sinon None.
+    Si oui, renvoie l'id de l'utilisateur, sinon None.
     """
     try:
         conn = get_connection()
@@ -136,7 +140,7 @@ def verify_user(username: str, password: str) -> Optional[int]:
 
 def get_user_profile(user_id: int) -> dict:
     """
-    Renvoie le profil (household_type, meals_per_day, num_children, num_adolescents, num_adults).
+    Récupère le profil de l'utilisateur : household_type, meals_per_day, num_children, num_adolescents, num_adults.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -158,8 +162,7 @@ def get_user_profile(user_id: int) -> dict:
 
 def update_user_profile(user_id: int, profile: dict):
     """
-    Met à jour les champs de profil dans la table users.
-    profile doit contenir keys : household_type, meals_per_day, num_children, num_adolescents, num_adults
+    Met à jour le profil de l'utilisateur (household_type, meals_per_day, num_children, num_adolescents, num_adults).
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -180,8 +183,8 @@ def update_user_profile(user_id: int, profile: dict):
 
 def get_recipes_for_user(user_id: int) -> pd.DataFrame:
     """
-    Récupère toutes les recettes pour cet user_id sous forme de DataFrame.
-    Colonnes retournées : [id, name, image_url, ingredients, instructions, extras_json]
+    Récupère toutes les recettes pour cet user_id sous forme de DataFrame :
+    colonnes [id, name, image_url, ingredients, instructions, extras_json].
     """
     conn = get_connection()
     df = pd.read_sql_query(
@@ -195,7 +198,7 @@ def get_recipes_for_user(user_id: int) -> pd.DataFrame:
 def insert_recipe(user_id: int, name: str, image_url: str, ingredients_json: str,
                   instructions: str, extras_json: str):
     """
-    Insère une nouvelle recette pour user_id.
+    Insère une nouvelle recette pour l'utilisateur donné.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -209,7 +212,7 @@ def insert_recipe(user_id: int, name: str, image_url: str, ingredients_json: str
 def update_recipe(recipe_id: int, name: str, image_url: str, ingredients_json: str,
                   instructions: str, extras_json: str):
     """
-    Met à jour une recette existante avec son recipe_id.
+    Met à jour une recette déjà existante, identifiée par recipe_id.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -223,7 +226,7 @@ def update_recipe(recipe_id: int, name: str, image_url: str, ingredients_json: s
 
 def delete_recipe(recipe_id: int):
     """
-    Supprime la recette identification recipe_id.
+    Supprime la recette dont l'id est passé en paramètre.
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -233,7 +236,7 @@ def delete_recipe(recipe_id: int):
 
 def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
     """
-    Récupère le planning (id, day, meal, recipe_name, timestamp) pour user_id.
+    Récupère le planning sous forme de DataFrame (id, day, meal, recipe_name, timestamp).
     """
     conn = get_connection()
     df = pd.read_sql_query(
@@ -246,13 +249,15 @@ def get_mealplan_for_user(user_id: int) -> pd.DataFrame:
 
 def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
     """
-    Remplace (DELETE + INSERT) tout le planning pour user_id, 
-    en ajoutant un timestamp (datetime.now()).
+    Remplace (DELETE + INSERT) tout le planning pour user_id.
+    On ajoute à chaque insertion un champ timestamp = datetime.now().
     """
     conn = get_connection()
     cursor = conn.cursor()
+    # Supprime l'ancien planning
     cursor.execute("DELETE FROM mealplans WHERE user_id = ?", (user_id,))
     conn.commit()
+    # Nouvelle insertion
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for _, row in plan_df.iterrows():
         cursor.execute("""
@@ -265,8 +270,8 @@ def upsert_mealplan(user_id: int, plan_df: pd.DataFrame):
 @st.cache_data
 def parse_ingredients(ing_str: str) -> list:
     """
-    Convertit la chaîne JSON stockée sous 'ingredients' 
-    en liste de dicts {"ingredient","quantity","unit"}.
+    Transforme la chaîne JSON stockée sous 'ingredients' en liste de dicts.
+    Chaque dict = { ingredient: str, quantity: float, unit: str }
     """
     try:
         return json.loads(ing_str)
@@ -276,8 +281,8 @@ def parse_ingredients(ing_str: str) -> list:
 @st.cache_data
 def parse_extras(extras_str: str) -> list:
     """
-    Convertit la chaîne JSON stockée sous 'extras_json' 
-    en liste de dicts {"category","item","quantity","unit"}.
+    Transforme la chaîne JSON stockée sous 'extras_json' en liste de dicts.
+    Chaque dict = { category: str, item: str, quantity: float, unit: str }
     """
     try:
         return json.loads(extras_str)
@@ -285,7 +290,7 @@ def parse_extras(extras_str: str) -> list:
         return []
 
 # -------------------------------------------------------------------------------
-# 3) CSS GLOBAL: NAVBAR FIXE + HERO + MODALES
+# 3) SETUP GLOBAL STREAMLIT (CSS, PAGE CONFIG)
 # -------------------------------------------------------------------------------
 st.set_page_config(
     page_title="Batchist: Meal Planner & Batch Cooking",
@@ -296,17 +301,14 @@ st.markdown(
     """
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            font-family: 'Poppins', sans-serif !important;
-        }
+        * { font-family: 'Poppins', sans-serif !important; }
         #MainMenu { visibility: hidden; }
         footer { visibility: hidden; }
 
         /* NAVBAR FIXE EN HAUT */
         .header {
             position: fixed;
-            top: 0;
-            left: 0;
+            top: 0; left: 0;
             width: 100%;
             background: #ffffffcc;
             backdrop-filter: blur(10px);
@@ -322,18 +324,13 @@ st.markdown(
             justify-content: space-between;
         }
         .header-logo img { width: 40px; height: 40px; }
-        .nav-item {
-            margin-left: 20px;
-            font-weight: 500;
-            cursor: pointer;
-            color: #333;
-        }
+        .nav-item { margin-left: 20px; font-weight: 500; cursor: pointer; color: #333; }
         .nav-item:hover { color: #FFA500; }
 
         /* POUR EVITER QUE LE CONTENU NE SOIT CACHÉ PAR LA NAVBAR */
         .streamlit-container { padding-top: 100px !important; }
 
-        /* HERO */
+        /* HERO (IMAGE DE BANNIÈRE) */
         .hero {
             position: relative;
             width: 100%;
@@ -343,54 +340,40 @@ st.markdown(
             color: white;
         }
         .hero-overlay {
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.4);
         }
         .hero-text {
-            position: relative;
-            z-index: 1;
-            text-align: center;
-            top: 50%;
-            transform: translateY(-50%);
+            position: relative; z-index: 1;
+            text-align: center; top: 50%; transform: translateY(-50%);
         }
         .hero-text h1 { font-size: 3rem; margin-bottom: 10px; }
         .hero-text p { font-size: 1.2rem; opacity: 0.9; }
 
-        /* MODALE (POP-UPS) */
+        /* MODALE (POP-UP ONBOARDING) */
         .modal-background {
-            position: fixed;
-            top: 0; left: 0;
+            position: fixed; top: 0; left: 0;
             width: 100%; height: 100%;
             background-color: rgba(0,0,0,0.5);
             z-index: 1001;
         }
         .modal-content {
-            position: fixed;
-            top: 50%; left: 50%;
+            position: fixed; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
             background: white;
             padding: 30px;
             border-radius: 8px;
-            max-width: 450px;
-            width: 90%;
+            max-width: 450px; width: 90%;
             box-shadow: 0 4px 20px rgba(0,0,0,0.2);
             z-index: 1002;
         }
         .modal-title {
-            font-size: 1.3rem;
-            font-weight: 700;
-            margin-bottom: 20px;
-            color: #333;
-            text-align: center;
+            font-size: 1.3rem; font-weight: 700; margin-bottom: 20px;
+            color: #333; text-align: center;
         }
         .modal-close {
-            position: absolute;
-            top: 10px;
-            right: 15px;
-            font-size: 1.2rem;
-            font-weight: 700;
-            color: #666;
+            position: absolute; top: 10px; right: 15px;
+            font-size: 1.2rem; font-weight: 700; color: #666;
             cursor: pointer;
         }
         .modal-close:hover { color: #333; }
@@ -438,14 +421,20 @@ st.markdown(
 )
 
 # -------------------------------------------------------------------------------
-# 5) AUTHENTIFICATION + ONBOARDING
+# 5) AUTHENTIFICATION + ONBOARDING POP-UPS
 # -------------------------------------------------------------------------------
+# On stocke dans session_state :
+#   - user_id (int) si connecté, sinon None
+#   - username (str)
+#   - onboard_step (0 = non connecté / 1 = choix foyer / 2 = choix nombre repas / 3 = onboardé)
+#   - household_type, meals_per_day
+
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "username" not in st.session_state:
     st.session_state.username = ""
 if "onboard_step" not in st.session_state:
-    st.session_state.onboard_step = 0  # 0 = non connecté, 1 = onboarding foyer, 2 = onboarding repas, 3 = onboardé
+    st.session_state.onboard_step = 0
 if "household_type" not in st.session_state:
     st.session_state.household_type = None
 if "meals_per_day" not in st.session_state:
@@ -453,13 +442,13 @@ if "meals_per_day" not in st.session_state:
 
 def show_login_page():
     """
-    Formulaire Connexion / Inscription avec st.form, 
-    pour qu’un seul clic “Se connecter” exécute verify_user()
+    Affiche les onglets Connexion / Inscription (dans des st.form) pour qu’un seul
+    clic sur “Se connecter” ou “Créer mon compte” déclenche la requête SQL immédiatement.
     """
     st.subheader("🔒 Connexion / Inscription")
     tab1, tab2 = st.tabs(["🔐 Connexion", "✍️ Inscription"])
 
-    # Onglet Connexion
+    # ----- Onglet Connexion -----
     with tab1:
         st.write("Connectez-vous pour accéder à Batchist.")
         with st.form(key="login_form"):
@@ -473,6 +462,7 @@ def show_login_page():
                     st.session_state.username = login_user.strip()
                     st.success(f"Bienvenue, **{login_user.strip()}** !")
                     profile = get_user_profile(uid)
+                    # Si pas encore de profil complet, on lance l'onboarding
                     if not profile.get("household_type") or not profile.get("meals_per_day"):
                         st.session_state.onboard_step = 1
                     else:
@@ -481,7 +471,7 @@ def show_login_page():
                 else:
                     st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
-    # Onglet Inscription
+    # ----- Onglet Inscription -----
     with tab2:
         st.write("Créez votre compte pour commencer.")
         with st.form(key="register_form"):
@@ -501,17 +491,19 @@ def show_login_page():
                     else:
                         st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà ou erreur SQLite.")
 
-# Tant que user_id == None → on affiche le login/inscription → st.stop()
+# Tant que user_id n’est pas défini (None), on affiche la page login/inscription et on stoppe l’app ici
 if st.session_state.user_id is None:
     show_login_page()
     st.stop()
 
 # -------------------------------------------------------------------------------
-# 5.1) ONBOARDING : étapes 1 & 2
+# 5.1) ONBOARDING – Étapes 1 & 2 (pop-ups modales)
 # -------------------------------------------------------------------------------
+# Si onboard_step == 1 : on affiche le pop-up “Comment vivez-vous ?” (Solo/Couple/Famille)
 if st.session_state.onboard_step == 1:
-    # Pop-up “Comment vivez-vous ?”
+    # Fond semi-transparent
     st.markdown('<div class="modal-background"></div>', unsafe_allow_html=True)
+    # Fenêtre blanche au centre
     st.markdown(
         """
         <div class="modal-content">
@@ -521,6 +513,7 @@ if st.session_state.onboard_step == 1:
         """,
         unsafe_allow_html=True,
     )
+    # JS pour la croix de fermeture
     st.markdown(
         """
         <script>
@@ -567,14 +560,15 @@ if st.session_state.onboard_step == 1:
             unsafe_allow_html=True
         )
 
+    # Si l’utilisateur clique sur la croix (closeOnboarding=1), on passe direkt à onboard_step=3
     if st.experimental_get_query_params().get("closeOnboarding"):
         st.session_state.onboard_step = 3
         st.experimental_set_query_params()
         st.experimental_rerun()
     st.stop()
 
+# Si onboard_step == 2 : on affiche le pop-up “Combien de repas par jour ?”
 if st.session_state.onboard_step == 2:
-    # Pop-up “Combien de repas par jour ?”
     st.markdown('<div class="modal-background"></div>', unsafe_allow_html=True)
     st.markdown(
         """
@@ -600,12 +594,13 @@ if st.session_state.onboard_step == 2:
     )
 
     meals_input = st.number_input(
-        "Nombre de repas / jour :", 
-        min_value=1, max_value=10, step=1, 
+        "Nombre de repas / jour :",
+        min_value=1, max_value=10, step=1,
         value=3, key="meals_input"
     )
     if st.button("Valider", key="btn_set_meals", use_container_width=True):
         st.session_state.meals_per_day = meals_input
+        # Par défaut, si Solo → 1 adulte, Couple → 2 adultes, Famille → 2 adultes (on ajustera sur la page Profil)
         if st.session_state.household_type == "Solo":
             num_adults, num_adolescents, num_children = 1, 0, 0
         elif st.session_state.household_type == "Couple":
@@ -613,6 +608,7 @@ if st.session_state.onboard_step == 2:
         else:
             num_adults, num_adolescents, num_children = 2, 0, 0
 
+        # On met à jour la table users avec ces infos
         update_user_profile(
             st.session_state.user_id,
             {
@@ -633,10 +629,11 @@ if st.session_state.onboard_step == 2:
     st.stop()
 
 # -------------------------------------------------------------------------------
-# 6) UTILISATEUR CONNECTÉ & ONBOARDÉ: AFFICHAGE DU CONTENU PRINCIPAL
+# 6) UTILISATEUR CONNECTÉ & ONBOARDÉ → AFFICHAGE DU CONTENU PRINCIPAL
 # -------------------------------------------------------------------------------
 USER_ID = st.session_state.user_id
 
+# Sidebar (navigation + profil + bouton de déconnexion)
 with st.sidebar:
     st.markdown("---")
     st.write(f"👤 **Utilisateur : {st.session_state.username}**")
@@ -664,9 +661,10 @@ with st.sidebar:
     )
 
 # -------------------------------------------------------------------------------
-# 7) LAYOUT PAR SECTION
+# 7) CONTENU PRINCIPAL SELON LA SECTION CHOISIE
 # -------------------------------------------------------------------------------
-# — Accueil (Dashboard)
+
+# — “Accueil” (Tableau de bord / Dashboard)
 if section == "Accueil":
     st.markdown('<div id="home"></div>', unsafe_allow_html=True)
     st.header("🏠 Tableau de bord")
@@ -683,6 +681,7 @@ if section == "Accueil":
         if df_last_month.empty:
             st.info("Aucun repas planifié au cours du mois précédent.")
         else:
+            # Nombre d’occurrences de chaque recette
             favorites = df_last_month["recipe_name"].value_counts().head(6)
             cols = st.columns(3, gap="medium")
             idx = 0
@@ -697,10 +696,12 @@ if section == "Accueil":
                     st.markdown(
                         f"""
                         <div class="favorite-card">
-                          <img src="{img}" alt="{recipe_name}">
-                          <div class="favorite-card-body">
-                            <div class="favorite-card-title">{recipe_name}</div>
-                            <div style="font-size:0.9rem; color:#555;">Planifié {count} fois</div>
+                          <img src="{img}" alt="{recipe_name}" style="width:100%; border-radius:8px;">
+                          <div class="favorite-card-body" style="padding:10px;">
+                            <div class="favorite-card-title" style="font-weight:600;">{recipe_name}</div>
+                            <div style="font-size:0.9rem; color:#555; margin-top:5px;">
+                              Planifié {count} fois
+                            </div>
                           </div>
                         </div>
                         """,
@@ -708,7 +709,7 @@ if section == "Accueil":
                     )
                 idx += 1
 
-# — Mes recettes
+# — “Mes recettes”
 elif section == "Mes recettes":
     st.markdown('<div id="recipes"></div>', unsafe_allow_html=True)
     st.header("📋 Mes recettes")
@@ -746,6 +747,7 @@ elif section == "Mes recettes":
         st.markdown("**Ingrédients**")
         ing_mode = st.radio("Mode d’ajout des ingrédients", ("Saisie manuelle", "Importer depuis texte"), index=0, horizontal=True)
         ingrédients_list = []
+
         if ing_mode == "Saisie manuelle":
             count_default = len(default_ing) if default_ing else 1
             if "ing_count" not in st.session_state:
@@ -859,7 +861,7 @@ elif section == "Mes recettes":
 
     st.markdown("---")
 
-    # Affichage des cartes recettes
+    # Affichage des recettes sous forme de « cartes »
     df_recettes = get_recipes_for_user(USER_ID)
     if df_recettes.empty:
         st.info("Vous n’avez (encore) aucune recette enregistrée.")
@@ -879,16 +881,20 @@ elif section == "Mes recettes":
                     with col:
                         st.markdown(
                             f"""
-                            <div class="recipe-card">
-                              <img src="{image_url}" alt="{recipe_name}">
-                              <div class="recipe-card-body">
-                                <div class="recipe-card-title">{recipe_name}</div>
+                            <div class="recipe-card" style="border:1px solid #ddd; border-radius:8px; overflow:hidden; margin-bottom:20px;">
+                              <img src="{image_url}" alt="{recipe_name}" style="width:100%; height:180px; object-fit:cover;">
+                              <div class="recipe-card-body" style="padding:10px;">
+                                <div class="recipe-card-title" style="font-weight:600; font-size:1.1rem;">{recipe_name}</div>
                                 <div style="font-size:0.9rem; color:#555; margin-top:5px;">
                                     Ingrédients : {', '.join([ing['ingredient'] for ing in ingrédients][:3])}...
                                 </div>
-                                <div class="recipe-card-buttons">
-                                    <button onclick="alert('Affichage détails non implémenté')">Voir</button>
-                                    <button onclick="alert('Pour modifier : réouvrez ce module et sélectionnez la recette')">Modifier</button>
+                                <div class="recipe-card-buttons" style="margin-top:10px;">
+                                    <button onclick="alert('Affichage détails non implémenté')" style="margin-right:8px; padding:5px 10px; background:#FFA500; border:none; border-radius:4px; color:white; cursor:pointer;">
+                                        Voir
+                                    </button>
+                                    <button onclick="alert('Pour modifier : réouvrez ce module et sélectionnez la recette')" style="padding:5px 10px; background:#555; border:none; border-radius:4px; color:white; cursor:pointer;">
+                                        Modifier
+                                    </button>
                                 </div>
                               </div>
                             </div>
@@ -896,7 +902,7 @@ elif section == "Mes recettes":
                             unsafe_allow_html=True
                         )
 
-# — Planificateur
+# — “Planificateur”
 elif section == "Planificateur":
     st.markdown('<div id="planner"></div>', unsafe_allow_html=True)
     st.header("📅 Planifier mes repas")
@@ -942,7 +948,7 @@ elif section == "Planificateur":
             )
         )
 
-# — Liste de courses
+# — “Liste de courses”
 elif section == "Liste de courses":
     st.markdown('<div id="shopping"></div>', unsafe_allow_html=True)
     st.header("🛒 Liste de courses générée")
@@ -976,7 +982,7 @@ elif section == "Liste de courses":
 
         st.table(shopping_df)
 
-        # Télécharger CSV
+        # Télécharger la liste au format CSV
         towrite = io.StringIO()
         shopping_df.to_csv(towrite, index=False, sep=";")
         towrite.seek(0)
@@ -987,7 +993,7 @@ elif section == "Liste de courses":
             mime="text/csv",
         )
 
-# — Conseils & Astuces
+# — “Conseils & Astuces”
 elif section == "Conseils & Astuces":
     st.markdown('<div id="tips"></div>', unsafe_allow_html=True)
     st.header("💡 Conseils & Astuces sur le Batch Cooking")
@@ -1008,10 +1014,10 @@ elif section == "Conseils & Astuces":
     6. **Variez les assaisonnements** :  
        Préparez une base de protéines (poulet, tofu, œufs) et assaisonnez-la différemment chaque jour (curry, teriyaki, épices mexicaines).  
     7. **Surveillez les dates de péremption** :  
-       Utilisez un autocollant pour indiquer la date de préparation.  
+       Utilisez un auto-collant pour indiquer la date de préparation.  
     8. **Impliquer toute la famille** :  
        Si vous cuisinez pour une famille, attribuez des tâches simples aux enfants (mélanger, laver les légumes), cela rend l’activité ludique.  
-    9. **Réinventez vos restes ** :  
+    9. **Réinventez vos restes** :  
        Transformez les restes du dîner en lunch box le lendemain (salades composées, wraps, omelettes).  
     10. **Nettoyage au fur et à mesure** :  
        Pendant que les ingrédients cuisent, profitez des temps de pause pour nettoyer les surfaces et ustensiles utilisés.  
@@ -1019,8 +1025,8 @@ elif section == "Conseils & Astuces":
     Bon batch cooking !
     """)
 
-# — Profil
-else:  # section == "Profil"
+# — “Profil”
+else:
     st.markdown('<div id="profile"></div>', unsafe_allow_html=True)
     st.header("👤 Profil utilisateur")
     st.markdown("Modifiez vos informations de foyer et d’usage de l’application.")
