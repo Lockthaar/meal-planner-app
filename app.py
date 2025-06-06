@@ -548,8 +548,8 @@ if st.session_state.user_id is None:
                     else:
                         st.session_state.onboard_step = 3
                     st.success(f"✅ Bienvenue, **{login_user.strip()}** !")
-                    # On relance le script pour passer à l’onboarding ou au contenu principal
-                    st.experimental_rerun()
+                    # => On arrête ici pour que Streamlit réexécute tout automatiquement
+                    st.stop()
                 else:
                     st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
@@ -585,14 +585,15 @@ if st.session_state.user_id is None:
                         st.success("✅ Compte créé. Vous pouvez maintenant vous connecter.")
                     else:
                         st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà.")
-    st.stop()  # Tant que user_id est None, on bloque ici et n’affiche pas le reste du script.
+    # Tant que user_id est None, on arrête ici et on n’affiche pas la suite
+    st.stop()
 
 
 # À ce stade, st.session_state.user_id est défini.
 # On passe à l’onboarding ou, si déjà rempli, au contenu principal.
 
 # ----------------------------------
-# 4.2) ONBOARDING : ÉTAPES 1 & 2 UNIQUEMENT UNE FOIS
+# 4.2) ONBOARDING : ÉTAPES 1 & 2 (UNE FOIS)
 # ----------------------------------
 
 # --- Étape 1 : Choisir le foyer (ONE‐TIME) ---
@@ -605,19 +606,19 @@ if st.session_state.onboard_step == 1:
         if st.button("Solo", key="btn_solo", use_container_width=True):
             st.session_state.household_type = "Solo"
             st.session_state.onboard_step = 2
-            st.experimental_rerun()
+            st.stop()
     with col2:
         if st.button("Couple", key="btn_couple", use_container_width=True):
             st.session_state.household_type = "Couple"
             st.session_state.onboard_step = 2
-            st.experimental_rerun()
+            st.stop()
     with col3:
         if st.button("Famille", key="btn_family", use_container_width=True):
             st.session_state.household_type = "Famille"
             st.session_state.onboard_step = 2
-            st.experimental_rerun()
+            st.stop()
 
-    st.stop()  # On arrête tout là, tant que l’utilisateur n’a pas cliqué.
+    st.stop()  # Tant que l’utilisateur n’a pas cliqué, on bloque ici.
 
 # --- Étape 2 : Combien de repas par jour ? (ONE‐TIME juste après étape 1) ---
 elif st.session_state.onboard_step == 2:
@@ -651,7 +652,7 @@ elif st.session_state.onboard_step == 2:
             }
         )
         st.session_state.onboard_step = 3
-        st.experimental_rerun()
+        st.stop()
 
     st.stop()
 
@@ -676,7 +677,7 @@ with st.sidebar:
         for key in ["user_id", "username", "onboard_step", "household_type", "meals_per_day"]:
             if key in st.session_state:
                 del st.session_state[key]
-        st.experimental_rerun()
+        st.stop()
 
     st.markdown("---")
     st.write("🗂️ **Navigation :**")
@@ -786,6 +787,7 @@ elif section == "Mes recettes":
         if ing_mode == "Saisie manuelle":
             if st.button("➕ Ajouter une ligne", key="add_ing_manu"):
                 st.session_state.ing_count += 1
+                st.stop()
 
             for i in range(st.session_state.ing_count):
                 ingr_i = default_ing[i]["ingredient"] if i < len(default_ing) else ""
@@ -852,6 +854,7 @@ elif section == "Mes recettes":
                 for key in ["ing_count", "import_ing_text"]:
                     if key in st.session_state:
                         del st.session_state[key]
+                st.stop()
 
     st.markdown("---")
 
@@ -883,6 +886,7 @@ elif section == "Mes recettes":
 
             if st.button("➕ Ajouter un champ d’extra", key="add_extra"):
                 st.session_state.extra_count += 1
+                st.stop()
 
             extras_list = []
             for j in range(st.session_state.extra_count):
@@ -939,6 +943,7 @@ elif section == "Mes recettes":
                 # Réinitialise extra_count
                 if "extra_count" in st.session_state:
                     del st.session_state["extra_count"]
+                st.stop()
 
     st.markdown("---")
 
@@ -1014,6 +1019,7 @@ elif section == "Planificateur":
                 st.success("✅ Planning de la semaine enregistré.")
             except sqlite3.OperationalError as e:
                 st.error(f"❌ Erreur lors de l’enregistrement du planning : {e}")
+            st.stop()
 
     st.markdown("---")
     st.write("### 🏠 Votre planning actuel")
