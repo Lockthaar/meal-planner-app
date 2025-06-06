@@ -24,7 +24,7 @@ st.markdown(
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
         * {
-            font-family: 'Poppins', sans-serif;
+            font-family: 'Poppins', sans-serif !important;
         }
         /* Masquer menu hamburger et footer Streamlit */
         #MainMenu {visibility: hidden;}
@@ -153,6 +153,7 @@ st.markdown(
             border: 1px solid #ddd !important;
             border-radius: 8px !important;
             box-shadow: 1px 1px 3px rgba(0,0,0,0.05) !important;
+            margin-bottom: 10px !important;
         }
 
         /* MODAL SIMULATION (POP-UPS) */
@@ -170,7 +171,7 @@ st.markdown(
             background: white;
             padding: 30px;
             border-radius: 8px;
-            max-width: 400px;
+            max-width: 450px;
             width: 90%;
             box-shadow: 0 4px 20px rgba(0,0,0,0.2);
             z-index: 1002;
@@ -178,7 +179,8 @@ st.markdown(
         .modal-title {
             font-size: 1.3rem;
             font-weight: 700;
-            margin-bottom: 10px;
+            margin-bottom: 20px;
+            color: #333;
         }
         .modal-options {
             display: flex;
@@ -194,6 +196,7 @@ st.markdown(
             border-radius: 8px;
             cursor: pointer;
             transition: transform 0.1s, box-shadow 0.1s;
+            background: #fafafa;
         }
         .modal-option:hover {
             transform: translateY(-3px);
@@ -204,6 +207,18 @@ st.markdown(
             height: 60px;
             margin-bottom: 10px;
         }
+        .modal-button {
+            background: #FFA500;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 20px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .modal-button:hover {
+            background: #ff9800;
+        }
 
         /* SMALL SCREEN ADJUST */
         @media (max-width: 768px) {
@@ -212,6 +227,12 @@ st.markdown(
             }
             .hero p {
                 font-size: 1rem !important;
+            }
+            .modal-options {
+                flex-direction: column;
+            }
+            .modal-option {
+                margin-bottom: 10px;
             }
         }
     </style>
@@ -222,6 +243,7 @@ st.markdown(
 # -------------------------------------------------------------------------------
 # 2) STRUCTURE DE LA PAGE : NAVBAR + HERO
 # -------------------------------------------------------------------------------
+
 # 2.1) NAVBAR FIXE
 st.markdown(
     """
@@ -271,7 +293,7 @@ def get_connection():
 def init_db():
     """
     1) Crée les tables users, recipes, mealplans si elles n’existent pas.
-    2) Vérifie et ajoute les colonnes manquantes (image_url, profil fields).
+    2) Vérifie et ajoute les colonnes manquantes (image_url, extras_json, profil fields).
     """
     conn = get_connection()
     cursor = conn.cursor()
@@ -300,7 +322,7 @@ def init_db():
         cursor.execute("ALTER TABLE users ADD COLUMN num_adults INTEGER")
     conn.commit()
 
-    # Table recipes : id, user_id, name, image_url, ingredients, instructions, extras_json
+    # Table recipes : id, user_id, name, ingredients, instructions, image_url, extras_json
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS recipes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -312,7 +334,6 @@ def init_db():
     )
     """)
     conn.commit()
-    # Ajouter colonnes manquantes
     cursor.execute("PRAGMA table_info(recipes)")
     cols_rec = [col[1] for col in cursor.fetchall()]
     if "image_url" not in cols_rec:
@@ -530,14 +551,14 @@ init_db()
 # -------------------------------------------------------------------------------
 # 4) AUTHENTIFICATION + ONBOARDING :
 #    - Connexion / Inscription
-#    - Pop-Ups d’onboarding (solo/couple/famille, puis repas par jour)
+#    - Pop-Ups d’onboarding (step1: foyer, step2: repas/jour)
 # -------------------------------------------------------------------------------
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 if "username" not in st.session_state:
     st.session_state.username = ""
 if "onboard_step" not in st.session_state:
-    st.session_state.onboard_step = 0  # 0 = pas encore connecté, 1 = premier login, 2 = second popup, 3 = onboardé
+    st.session_state.onboard_step = 0  # 0 = pas encore connecté, 1 = onboarding foyer, 2 = onboarding repas, 3 = onboardé
 if "household_type" not in st.session_state:
     st.session_state.household_type = None
 if "meals_per_day" not in st.session_state:
@@ -557,7 +578,12 @@ def show_login_page():
                 st.session_state.user_id = uid
                 st.session_state.username = login_user.strip()
                 st.success(f"Bienvenue, **{login_user.strip()}** !")
-                st.session_state.onboard_step = 1  # passe à l'étape onboarding
+                # Démarrer l’onboarding
+                profile = get_user_profile(uid)
+                if not profile.get("household_type") or not profile.get("meals_per_day"):
+                    st.session_state.onboard_step = 1
+                else:
+                    st.session_state.onboard_step = 3
             else:
                 st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
@@ -588,7 +614,9 @@ if st.session_state.user_id is None:
 #     Étapes :
 #       1 → choix Solo / Couple / Famille
 #       2 → nombre de repas par jour
+#       3 → terminé → afficher contenu principal
 # -------------------------------------------------------------------------------
+
 if st.session_state.onboard_step == 1:
     # Premier pop-up : household type
     st.markdown('<div class="modal-background"></div>', unsafe_allow_html=True)
@@ -596,41 +624,53 @@ if st.session_state.onboard_step == 1:
         """
         <div class="modal-content">
           <div class="modal-title">Comment vivez-vous ?</div>
-          <div class="modal-options">
-            <div class="modal-option" onclick="window.dispatchEvent(new Event('solo'))">
-              <img src="https://img.icons8.com/fluency/96/000000/user.png"/>
-              <div>Solo</div>
-            </div>
-            <div class="modal-option" onclick="window.dispatchEvent(new Event('couple'))">
-              <img src="https://img.icons8.com/fluency/96/000000/couple.png"/>
-              <div>Couple</div>
-            </div>
-            <div class="modal-option" onclick="window.dispatchEvent(new Event('family'))">
-              <img src="https://img.icons8.com/fluency/96/000000/family.png"/>
-              <div>Famille</div>
-            </div>
-          </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    # Écoute des clics via JavaScript → Python
-    query_params = st.experimental_get_query_params()
-    if "solo" in query_params:
-        st.session_state.household_type = "Solo"
-        st.session_state.onboard_step = 2
-        st.experimental_set_query_params()  # reset
-        st.experimental_rerun()
-    if "couple" in query_params:
-        st.session_state.household_type = "Couple"
-        st.session_state.onboard_step = 2
-        st.experimental_set_query_params()
-        st.experimental_rerun()
-    if "family" in query_params:
-        st.session_state.household_type = "Famille"
-        st.session_state.onboard_step = 2
-        st.experimental_set_query_params()
-        st.experimental_rerun()
+    col1, col2, col3 = st.columns(3, gap="small")
+    with col1:
+        if st.button(
+            "Solo", 
+            key="btn_solo", 
+            help="Je vis seul(e).",
+            use_container_width=True
+        ):
+            st.session_state.household_type = "Solo"
+            st.session_state.onboard_step = 2
+            st.experimental_rerun()
+        st.markdown(
+            '<div style="text-align:center; margin-top:5px;"><img src="https://img.icons8.com/dusk/100/000000/user.png" alt="solo"/></div>',
+            unsafe_allow_html=True
+        )
+    with col2:
+        if st.button(
+            "Couple", 
+            key="btn_couple", 
+            help="Nous vivons à deux.", 
+            use_container_width=True
+        ):
+            st.session_state.household_type = "Couple"
+            st.session_state.onboard_step = 2
+            st.experimental_rerun()
+        st.markdown(
+            '<div style="text-align:center; margin-top:5px;"><img src="https://img.icons8.com/dusk/100/000000/couple.png" alt="couple"/></div>',
+            unsafe_allow_html=True
+        )
+    with col3:
+        if st.button(
+            "Famille", 
+            key="btn_family", 
+            help="Nous sommes en famille.", 
+            use_container_width=True
+        ):
+            st.session_state.household_type = "Famille"
+            st.session_state.onboard_step = 2
+            st.experimental_rerun()
+        st.markdown(
+            '<div style="text-align:center; margin-top:5px;"><img src="https://img.icons8.com/dusk/100/000000/family.png" alt="famille"/></div>',
+            unsafe_allow_html=True
+        )
     st.stop()
 
 if st.session_state.onboard_step == 2:
@@ -640,37 +680,44 @@ if st.session_state.onboard_step == 2:
         """
         <div class="modal-content">
           <div class="modal-title">Combien de repas par jour préparez-vous ?</div>
-          <div style="margin-top:15px;">
-            <input id="meals_input" type="number" min="1" max="10" step="1" value="3" style="width:80%; padding:8px; font-size:1rem;"/>
-          </div>
-          <div style="margin-top:20px; text-align:right;">
-            <button onclick="window.dispatchEvent(new CustomEvent('setMeals', {detail: document.getElementById('meals_input').value}))">Valider</button>
-          </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    query_params = st.experimental_get_query_params()
-    if "setMeals" in query_params:
-        try:
-            mpd = int(query_params["setMeals"][0])
-        except:
-            mpd = 3
-        st.session_state.meals_per_day = mpd
-        st.session_state.onboard_step = 3
-        # Enregistrer dans la DB
-        update_user_profile(
-            st.session_state.user_id,
-            {
-                "household_type": st.session_state.household_type,
-                "meals_per_day": st.session_state.meals_per_day,
-                "num_children": 0,
-                "num_adolescents": 0,
-                "num_adults": 1 if st.session_state.household_type == "Solo" else (2 if st.session_state.household_type == "Couple" else 2)
-            }
+    with st.container():
+        meals_input = st.number_input(
+            "Nombre de repas / jour :", 
+            min_value=1, max_value=10, step=1, 
+            value=3, key="meals_input"
         )
-        st.experimental_set_query_params()
-        st.experimental_rerun()
+        st.write("")  # espace
+        if st.button("Valider", key="btn_set_meals", use_container_width=True):
+            st.session_state.meals_per_day = meals_input
+            # Définir valeurs par défaut pour composition famille si besoin
+            if st.session_state.household_type == "Solo":
+                num_adults = 1
+                num_adolescents = 0
+                num_children = 0
+            elif st.session_state.household_type == "Couple":
+                num_adults = 2
+                num_adolescents = 0
+                num_children = 0
+            else:  # Famille → initialiser à 2 adultes, 0 adolescents, 0 enfants par défaut
+                num_adults = 2
+                num_adolescents = 0
+                num_children = 0
+            update_user_profile(
+                st.session_state.user_id,
+                {
+                    "household_type": st.session_state.household_type,
+                    "meals_per_day": st.session_state.meals_per_day,
+                    "num_children": num_children,
+                    "num_adolescents": num_adolescents,
+                    "num_adults": num_adults
+                }
+            )
+            st.session_state.onboard_step = 3
+            st.experimental_rerun()
     st.stop()
 
 # Lorsque onboard_step == 3, c’est terminé → on passe à l’affichage normal
@@ -684,14 +731,13 @@ USER_ID = st.session_state.user_id
 with st.sidebar:
     st.markdown("---")
     st.write(f"👤 **Utilisateur : {st.session_state.username}**")
-    st.write(f"🏠 Type de foyer : {get_user_profile(USER_ID).get('household_type', '–')}")
-    st.write(f"🍽️ Repas/jour : {get_user_profile(USER_ID).get('meals_per_day', '–')}")
+    profile = get_user_profile(USER_ID)
+    st.write(f"🏠 Foyer : {profile.get('household_type', '–')}")
+    st.write(f"🍽️ Repas/jour : {profile.get('meals_per_day', '–')}")
     if st.button("🔓 Se déconnecter", use_container_width=True):
-        del st.session_state.user_id
-        del st.session_state.username
-        del st.session_state.onboard_step
-        del st.session_state.household_type
-        del st.session_state.meals_per_day
+        for key in ["user_id","username","onboard_step","household_type","meals_per_day"]:
+            if key in st.session_state:
+                del st.session_state[key]
         st.experimental_rerun()
     st.markdown("---")
     st.write("🗂️ **Navigation :**")
@@ -718,12 +764,11 @@ if section == "Accueil":
     st.header("🏠 Tableau de bord")
     st.markdown("Vos repas préférés du mois dernier")
 
-    # Calcul des recettes favorites sur le mois précédent en comptant dans mealplans
     df_plan = get_mealplan_for_user(USER_ID)
     if df_plan.empty:
         st.info("Vous n’avez pas encore planifié de repas.")
     else:
-        # On filtre sur le dernier mois
+        # Filtrer sur le dernier mois
         now = datetime.now()
         one_month_ago = now - timedelta(days=30)
         df_plan["timestamp"] = pd.to_datetime(df_plan["timestamp"])
@@ -736,10 +781,10 @@ if section == "Accueil":
             cols = st.columns(3, gap="medium")
             idx = 0
             for recipe_name, count in favorites.items():
-                row = get_recipes_for_user(USER_ID)
-                img_url = row[row["name"] == recipe_name]["image_url"].values
-                if len(img_url) > 0 and img_url[0]:
-                    img = img_url[0]
+                df_rec = get_recipes_for_user(USER_ID)
+                img_url = df_rec[df_rec["name"] == recipe_name]["image_url"]
+                if not img_url.empty and img_url.values[0]:
+                    img = img_url.values[0]
                 else:
                     img = "https://via.placeholder.com/300x180.png?text=No+Image"
                 with cols[idx % 3]:
@@ -763,7 +808,7 @@ elif section == "Mes recettes":
     st.header("📋 Mes recettes")
     st.markdown("Ajoutez, consultez, modifiez ou supprimez vos recettes personnelles.")
 
-    # Récupérer profil pour adapter l’affichage
+    # Récupérer profil pour adapter l’affichage si besoin
     profile = get_user_profile(USER_ID)
 
     # 6.1 – Formulaire d’ajout / édition de recette
@@ -771,14 +816,13 @@ elif section == "Mes recettes":
         df_recettes = get_recipes_for_user(USER_ID)
         all_names = df_recettes["name"].tolist()
 
-        # Permettre de sélectionner une recette existante pour édition
+        # Sélection d'une recette existante pour édition
         choice = st.selectbox(
-            "Sélectionnez une recette existante pour modifier (ou laissez vide pour nouvelle)",
+            "Sélectionnez une recette à modifier (ou laissez vide pour nouvelle)",
             options=[""] + all_names
         )
 
         if choice:
-            # On préremplit
             rec_row = df_recettes[df_recettes["name"] == choice].iloc[0]
             recipe_id = rec_row["id"]
             default_name = rec_row["name"]
@@ -795,37 +839,19 @@ elif section == "Mes recettes":
             default_extras = []
 
         name = st.text_input("Nom de la recette", value=default_name, placeholder="Ex. : Gratin de légumes")
-
-        image_url = st.text_input(
-            "URL de l’image (optionnelle)",
-            value=default_image,
-            placeholder="Ex. : https://…/mon_image.jpg"
-        )
-
-        instructions = st.text_area(
-            "Instructions (facultatif)",
-            value=default_instr,
-            placeholder="Décrivez ici la préparation…"
-        )
+        image_url = st.text_input("URL de l’image (optionnelle)", value=default_image, placeholder="Ex. : https://…/mon_image.jpg")
+        instructions = st.text_area("Instructions (facultatif)", value=default_instr, placeholder="Décrivez ici la préparation…")
 
         st.markdown("**Ingrédients**")
-        # Barre de saisie texte copie/colle ou manuel
-        ing_mode = st.radio(
-            "Mode d’ajout des ingrédients",
-            ("Saisie manuelle", "Importer depuis texte"),
-            index=0,
-            horizontal=True
-        )
+        ing_mode = st.radio("Mode d’ajout des ingrédients", ("Saisie manuelle", "Importer depuis texte"), index=0, horizontal=True)
         ingrédients_list = []
         if ing_mode == "Saisie manuelle":
-            # Nombre de lignes selon default_ing
             count_default = len(default_ing) if default_ing else 1
             if "ing_count" not in st.session_state:
                 st.session_state.ing_count = count_default
             if st.button("➕ Ajouter une ligne", key="add_ing_manu"):
                 st.session_state.ing_count += 1
 
-            # Affichage
             for i in range(st.session_state.ing_count):
                 ingr_i = default_ing[i]["ingredient"] if i < len(default_ing) else ""
                 qty_i = default_ing[i]["quantity"] if i < len(default_ing) else 0.0
@@ -866,7 +892,6 @@ elif section == "Mes recettes":
 
         st.markdown("**Extras** (Boissons, Maison, Plantes, Animaux)")
         extras_list = []
-        # On offre un module simple pour ajouter des extras ligne par ligne
         if "extra_count" not in st.session_state:
             st.session_state.extra_count = len(default_extras) if default_extras else 1
         if st.button("➕ Ajouter un extra", key="add_extra"):
@@ -898,9 +923,7 @@ elif section == "Mes recettes":
                 "unit": unit_extra
             })
 
-        # Boutons Enregistrer / Modifier
         if st.button("💾 Enregistrer la recette", key="save_recipe", use_container_width=True):
-            # Validation minimale
             if not name.strip():
                 st.error("❌ Le nom de la recette ne peut pas être vide.")
             elif not ingrédients_list:
@@ -912,26 +935,15 @@ elif section == "Mes recettes":
                 ], ensure_ascii=False)
                 extras_json = json.dumps([e for e in extras_list if e["item"].strip() and e["quantity"] > 0], ensure_ascii=False)
                 if recipe_id:
-                    # Edition
                     update_recipe(recipe_id, name.strip(), image_url.strip(), ing_json, instructions.strip(), extras_json)
                     st.success(f"✅ Recette « {name.strip()} » mise à jour.")
                 else:
-                    # Nouvelle insertion
                     insert_recipe(USER_ID, name.strip(), image_url.strip(), ing_json, instructions.strip(), extras_json)
                     st.success(f"✅ Recette « {name.strip()} » ajoutée.")
                 # Réinitialiser le formulaire
-                if "new_name" in st.session_state:
-                    del st.session_state["new_name"]
-                if "new_image_url" in st.session_state:
-                    del st.session_state["new_image_url"]
-                if "new_instructions" in st.session_state:
-                    del st.session_state["new_instructions"]
-                if "ing_count" in st.session_state:
-                    del st.session_state["ing_count"]
-                if "extra_count" in st.session_state:
-                    del st.session_state["extra_count"]
-                if "import_ing_text" in st.session_state:
-                    del st.session_state["import_ing_text"]
+                for key in ["new_name", "new_image_url", "new_instructions", "ing_count", "extra_count", "import_ing_text"]:
+                    if key in st.session_state:
+                        del st.session_state[key]
                 st.experimental_rerun()
 
     st.markdown("---")
@@ -965,8 +977,8 @@ elif section == "Mes recettes":
                                     Ingrédients : {', '.join([ing['ingredient'] for ing in ingrédients][:3])}...
                                 </div>
                                 <div class="recipe-card-buttons">
-                                    <button onclick="alert('Voir détails non implémenté')">Voir</button>
-                                    <button onclick="alert('Modifier: sélectionnez cette recette dans le menu')">Modifier</button>
+                                    <button onclick="alert('Affichage détails non implémenté')">Voir</button>
+                                    <button onclick="alert('Pour modifier : réouvrez ce module et sélectionnez la recette')">Modifier</button>
                                 </div>
                               </div>
                             </div>
@@ -1078,7 +1090,7 @@ elif section == "Conseils & Astuces":
     2. **Utilisez des contenants hermétiques** :  
        Investissez dans des boîtes de conservation réutilisables et étiquetez-les pour éviter la confusion.  
     3. **Cuisinez des aliments polyvalents** :  
-       Préparez des légumineuses, du riz ou des quinoa en grande quantité pour accompagner plusieurs plats.  
+       Préparez des légumineuses, du riz ou du quinoa en grande quantité pour accompagner plusieurs plats.  
     4. **Congélation intelligente** :  
        Séparez vos plats en portions individuelles avant de congeler pour décongeler rapidement une seule portion.  
     5. **Optimisez vos ingrédients frais** :  
