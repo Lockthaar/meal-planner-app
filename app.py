@@ -580,47 +580,55 @@ if "meals_per_day" not in st.session_state:
     st.session_state.meals_per_day = None
 
 def show_login_page():
+    """
+    Affiche le formulaire de connexion / inscription.
+    Utilise st.form pour garantir qu’on capture le clic sur “Se connecter” en un seul envoi.
+    """
     st.subheader("🔒 Connexion / Inscription")
     tab1, tab2 = st.tabs(["🔐 Connexion", "✍️ Inscription"])
 
     with tab1:
         st.write("Connectez-vous pour accéder à Batchist.")
-        login_user = st.text_input("Nom d'utilisateur", key="login_username", placeholder="Ex. : utilisateur123")
-        login_pwd  = st.text_input("Mot de passe", type="password", key="login_password", placeholder="••••••••")
-        if st.button("Se connecter", key="login_button", use_container_width=True):
-            uid = verify_user(login_user.strip(), login_pwd)
-            if uid:
-                st.session_state.user_id = uid
-                st.session_state.username = login_user.strip()
-                st.success(f"Bienvenue, **{login_user.strip()}** !")
-                # Démarrer l’onboarding ou aller directement à l'application
-                profile = get_user_profile(uid)
-                if not profile.get("household_type") or not profile.get("meals_per_day"):
-                    st.session_state.onboard_step = 1
+        with st.form(key="login_form"):
+            login_user = st.text_input("Nom d'utilisateur", key="login_username", placeholder="Ex. : utilisateur123")
+            login_pwd  = st.text_input("Mot de passe", type="password", key="login_password", placeholder="••••••••")
+            login_submit = st.form_submit_button("Se connecter", use_container_width=True)
+            if login_submit:
+                uid = verify_user(login_user.strip(), login_pwd)
+                if uid:
+                    st.session_state.user_id = uid
+                    st.session_state.username = login_user.strip()
+                    st.success(f"Bienvenue, **{login_user.strip()}** !")
+                    # Déterminer si l’on doit passer l’onboarding
+                    profile = get_user_profile(uid)
+                    if not profile.get("household_type") or not profile.get("meals_per_day"):
+                        st.session_state.onboard_step = 1
+                    else:
+                        st.session_state.onboard_step = 3
+                    st.experimental_rerun()
                 else:
-                    st.session_state.onboard_step = 3
-                st.experimental_rerun()
-            else:
-                st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
+                    st.error("❌ Nom d’utilisateur ou mot de passe incorrect.")
 
     with tab2:
         st.write("Créez votre compte pour commencer.")
-        new_user = st.text_input("Nom d'utilisateur souhaité", key="register_username", placeholder="Ex. : mon_profil")
-        new_pwd  = st.text_input("Mot de passe", type="password", key="register_password", placeholder="••••••••")
-        confirm_pwd = st.text_input("Confirmez le mot de passe", type="password", key="register_confirm", placeholder="••••••••")
-        if st.button("Créer mon compte", key="register_button", use_container_width=True):
-            if not new_user.strip():
-                st.error("❌ Le nom d’utilisateur ne peut pas être vide.")
-            elif new_pwd != confirm_pwd:
-                st.error("❌ Les mots de passe ne correspondent pas.")
-            else:
-                ok = add_user(new_user.strip(), new_pwd)
-                if ok:
-                    st.success("✅ Compte créé. Vous pouvez maintenant vous connecter.")
+        with st.form(key="register_form"):
+            new_user = st.text_input("Nom d'utilisateur souhaité", key="register_username", placeholder="Ex. : mon_profil")
+            new_pwd  = st.text_input("Mot de passe", type="password", key="register_password", placeholder="••••••••")
+            confirm_pwd = st.text_input("Confirmez le mot de passe", type="password", key="register_confirm", placeholder="••••••••")
+            register_submit = st.form_submit_button("Créer mon compte", use_container_width=True)
+            if register_submit:
+                if not new_user.strip():
+                    st.error("❌ Le nom d’utilisateur ne peut pas être vide.")
+                elif new_pwd != confirm_pwd:
+                    st.error("❌ Les mots de passe ne correspondent pas.")
                 else:
-                    st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà.")
+                    ok = add_user(new_user.strip(), new_pwd)
+                    if ok:
+                        st.success("✅ Compte créé. Vous pouvez maintenant vous connecter.")
+                    else:
+                        st.error(f"❌ Le nom d’utilisateur « {new_user.strip()} » existe déjà.")
 
-# Si l’utilisateur n’est pas connecté, on affiche le login/inscription
+# Si l’utilisateur n’est pas connecté, on affiche le login/inscription et on stoppe l’exécution
 if st.session_state.user_id is None:
     show_login_page()
     st.stop()
@@ -645,8 +653,7 @@ if st.session_state.onboard_step == 1:
         """,
         unsafe_allow_html=True,
     )
-    # Bouton X en haut à droite pour fermer la modale et passer à l'application
-    # On gère via un petit script JS intégré
+    # JS pour signaler la fermeture
     st.markdown(
         """
         <script>
@@ -655,7 +662,11 @@ if st.session_state.onboard_step == 1:
         }
         window.addEventListener("message", (event) => {
             if (event.data.streamlitCloseOnboarding) {
-                // Rien à faire côté JS
+                // Ajouter le paramètre closeOnboarding dans l'URL
+                const url = new URL(window.location);
+                url.searchParams.set("closeOnboarding", "1");
+                window.history.replaceState(null, null, url.toString());
+                window.location.reload();
             }
         });
         </script>
@@ -691,9 +702,9 @@ if st.session_state.onboard_step == 1:
             '<div style="text-align:center; margin-top:5px;"><img src="https://img.icons8.com/dusk/100/000000/family.png" alt="famille"/></div>',
             unsafe_allow_html=True
         )
-    # Gérer le bouton X pour fermer l'onboarding sans sélectionner
+
+    # Si utilisateur clique sur la croix → closeOnboarding param = 1 → passer à 3
     if st.experimental_get_query_params().get("closeOnboarding"):
-        # L'utilisateur a cliqué sur la croix → ignorer l'onboarding
         st.session_state.onboard_step = 3
         st.experimental_set_query_params()
         st.experimental_rerun()
@@ -711,13 +722,21 @@ if st.session_state.onboard_step == 2:
         """,
         unsafe_allow_html=True,
     )
-    # JS pour fer ler la modale si l'utilisateur clique sur la croix
+    # JS pour signaler la fermeture
     st.markdown(
         """
         <script>
         window._streamlit_close_onboarding = function() {
             window.parent.postMessage({streamlitCloseOnboarding: true}, "*");
         }
+        window.addEventListener("message", (event) => {
+            if (event.data.streamlitCloseOnboarding) {
+                const url = new URL(window.location);
+                url.searchParams.set("closeOnboarding", "1");
+                window.history.replaceState(null, null, url.toString());
+                window.location.reload();
+            }
+        });
         </script>
         """,
         unsafe_allow_html=True,
@@ -730,7 +749,7 @@ if st.session_state.onboard_step == 2:
     )
     if st.button("Valider", key="btn_set_meals", use_container_width=True):
         st.session_state.meals_per_day = meals_input
-        # Donner des valeurs par défaut pour famille, si nécessaire
+        # Définir valeurs par défaut de la composition si nécessaire
         if st.session_state.household_type == "Solo":
             num_adults = 1
             num_adolescents = 0
@@ -739,7 +758,7 @@ if st.session_state.onboard_step == 2:
             num_adults = 2
             num_adolescents = 0
             num_children = 0
-        else:  # Famille → initialiser à 2 adultes, 0 adolescents, 0 enfants par défaut
+        else:  # Famille → 2 adultes, 0 ados, 0 enfants par défaut
             num_adults = 2
             num_adolescents = 0
             num_children = 0
@@ -756,7 +775,6 @@ if st.session_state.onboard_step == 2:
         st.session_state.onboard_step = 3
         st.experimental_rerun()
 
-    # Si l'utilisateur clique sur la croix (en JS), on le note via un query param “closeOnboarding”
     if st.experimental_get_query_params().get("closeOnboarding"):
         st.session_state.onboard_step = 3
         st.experimental_set_query_params()
@@ -1128,25 +1146,25 @@ elif section == "Conseils & Astuces":
     **Bienvenue dans la page Astuces !**  
     Découvrez des conseils pour optimiser votre batch cooking, économiser du temps et cuisiner des plats savoureux :
     
-    1. **Planifiez vos menus à l'avance **  
+    1. **Planifiez vos menus à l'avance** :  
        Sélectionnez 2 à 3 recettes par semaine que vous pouvez préparer en grandes quantités.  
-    2. **Utilisez des contenants hermétiques **  
+    2. **Utilisez des contenants hermétiques** :  
        Investissez dans des boîtes de conservation réutilisables et étiquetez-les pour éviter la confusion.  
-    3. **Cuisinez des aliments polyvalents **  
+    3. **Cuisinez des aliments polyvalents** :  
        Préparez des légumineuses, du riz ou du quinoa en grande quantité pour accompagner plusieurs plats.  
-    4. **Congélation intelligente **  
+    4. **Congélation intelligente** :  
        Séparez vos plats en portions individuelles avant de congeler pour décongeler rapidement une seule portion.  
-    5. **Optimisez vos ingrédients frais **  
+    5. **Optimisez vos ingrédients frais** :  
        Coupez et stockez vos légumes en avance dans des sacs hermétiques ; les herbes fraîches se conservent plus longtemps si elles sont légèrement humides et bien emballées.  
-    6. **Variez les assaisonnements **  
+    6. **Variez les assaisonnements** :  
        Préparez une base de protéines (poulet, tofu, œufs) et assaisonnez-la différemment chaque jour (curry, teriyaki, épices mexicaines).  
-    7. **Surveillez les dates de péremption **  
+    7. **Surveillez les dates de péremption** :  
        Utilisez un auto-collant pour indiquer la date de préparation.  
-    8. **Impliquer toute la famille **  
+    8. **Impliquer toute la famille** :  
        Si vous cuisinez pour une famille, attribuez des tâches simples aux enfants (mélanger, laver les légumes), cela rend l’activité ludique.  
-    9. **Réinventez vos restes **  
+    9. **Réinventez vos restes** :  
        Transformez les restes du dîner en lunch box le lendemain (salades composées, wraps, omelettes).  
-    10. **Nettoyage au fur et à mesure **  
+    10. **Nettoyage au fur et à mesure** :  
        Pendant que les ingrédients cuisent, profitez des temps de pause pour nettoyer les surfaces et ustensiles utilisés.  
 
     Bon batch cooking !
