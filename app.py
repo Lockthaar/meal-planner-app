@@ -137,29 +137,30 @@ if page == "Accueil":
 elif page == "Mes recettes":
     st.title("📋 Mes recettes")
 
-    # State
     if "show_form" not in st.session_state:
         st.session_state.show_form = False
     if "ings" not in st.session_state:
         st.session_state.ings = [{"name":"", "qty":0.0, "unit":"g"}]
 
-    # Toggle formulaire
+    # BOUTON POUR CACHER/AFFICHER LE FORMULAIRE
     if st.button("+ Ajouter une recette"):
         st.session_state.show_form = not st.session_state.show_form
 
     if st.session_state.show_form:
-        # **Ce bouton doit être HORS du "with st.form"**
+
+        # <<<— CE BOUTON DOIT ÊTRE HORS DU FORMULAIRE —>>>
         if st.button("+ Ingrédient", key="add_ing"):
             st.session_state.ings.append({"name":"", "qty":0.0, "unit":"g"})
             do_rerun()
 
+        # Début du formulaire
         with st.form("add_recipe_form", clear_on_submit=True):
             name  = st.text_input("Nom de la recette")
             instr = st.text_area("Instructions", height=100)
             img   = st.text_input("URL de l'image (placeholder OK)")
 
             col1, col2 = st.columns([1,1])
-            # ← Édition
+            # ← Édition des ingrédients
             with col1:
                 for i, ing in enumerate(st.session_state.ings):
                     c0, c1, c2, c3 = st.columns([3,1,1,1])
@@ -172,14 +173,16 @@ elif page == "Mes recettes":
                         st.session_state.ings.pop(i)
                         do_rerun()
 
-            # → Aperçu
+            # → Aperçu des ingrédients
             with col2:
                 st.markdown("**Aperçu des ingrédients**")
                 for ing in st.session_state.ings:
                     st.write(f"- {ing['name']}: {ing['qty']} {ing['unit']}")
 
+            # BOUTON DE SOUMISSION DU FORMULAIRE
             submit = st.form_submit_button("Ajouter la recette")
 
+        # Traitement après submit
         if submit:
             if not name.strip():
                 st.error("Le nom est requis.")
@@ -196,22 +199,7 @@ elif page == "Mes recettes":
                 st.session_state.show_form = False
                 do_rerun()
 
-    st.write("---")
-    cols = st.columns(2)
-    for idx, rec in enumerate(recipes_db[user]):
-        c = cols[idx % 2]
-        if rec["img"]:
-            c.image(rec["img"], width=150)
-        c.subheader(rec["name"])
-        for ing in rec["ings"]:
-            c.write(f"- {ing['name']}: {ing['qty']} {ing['unit']}")
-        if c.button("Supprimer", key=f"delrec{idx}"):
-            recipes_db[user].pop(idx)
-            save_json(RECIPES_FILE, recipes_db)
-            do_rerun()
-        if c.button("Partager", key=f"sharerec{idx}"):
-            st.info(f"Partage de « {rec['name']} »…")
-
+    # … le reste de l’affichage des recettes …
 
 # ————————————————————————————————————————————————
 #   Extras
