@@ -116,11 +116,9 @@ extras_db   = load_json(EXTRAS_FILE)
 plans_db    = load_json(PLANS_FILE)
 profiles_db = load_json(PROFILES_FILE)
 
-# S’assurer que chaque user a ses clés
 for db in (recipes_db, extras_db, plans_db, profiles_db):
     db.setdefault(user, {})
 
-# Convertir en liste si vide
 recipes_db[user] = recipes_db[user] or []
 extras_db[user]  = extras_db[user]  or []
 
@@ -139,21 +137,18 @@ if page == "Accueil":
 elif page == "Mes recettes":
     st.title("📋 Mes recettes")
 
-    # Initialisation du state
+    # State
     if "show_form" not in st.session_state:
         st.session_state.show_form = False
     if "ings" not in st.session_state:
         st.session_state.ings = [{"name":"", "qty":0.0, "unit":"g"}]
 
-    # Bouton pour ouvrir/fermer le formulaire
+    # Toggle formulaire
     if st.button("+ Ajouter une recette"):
         st.session_state.show_form = not st.session_state.show_form
 
-    # Formulaire visible
     if st.session_state.show_form:
-        # ——————————————
-        # Bouton “+ Ingrédient” en dehors du form
-        # ——————————————
+        # **Ce bouton doit être HORS du "with st.form"**
         if st.button("+ Ingrédient", key="add_ing"):
             st.session_state.ings.append({"name":"", "qty":0.0, "unit":"g"})
             do_rerun()
@@ -164,7 +159,7 @@ elif page == "Mes recettes":
             img   = st.text_input("URL de l'image (placeholder OK)")
 
             col1, col2 = st.columns([1,1])
-            # ← Partie édition des ingrédients
+            # ← Édition
             with col1:
                 for i, ing in enumerate(st.session_state.ings):
                     c0, c1, c2, c3 = st.columns([3,1,1,1])
@@ -177,7 +172,7 @@ elif page == "Mes recettes":
                         st.session_state.ings.pop(i)
                         do_rerun()
 
-            # → Aperçu des ingrédients
+            # → Aperçu
             with col2:
                 st.markdown("**Aperçu des ingrédients**")
                 for ing in st.session_state.ings:
@@ -197,13 +192,11 @@ elif page == "Mes recettes":
                 })
                 save_json(RECIPES_FILE, recipes_db)
                 st.success("Recette ajoutée !")
-                # reset form
                 st.session_state.ings = [{"name":"", "qty":0.0, "unit":"g"}]
                 st.session_state.show_form = False
                 do_rerun()
 
     st.write("---")
-    # Affichage des recettes en deux colonnes
     cols = st.columns(2)
     for idx, rec in enumerate(recipes_db[user]):
         c = cols[idx % 2]
@@ -279,16 +272,13 @@ elif page == "Planificateur":
 elif page == "Liste de courses":
     st.title("🛒 Liste de courses")
     shop = {}
-    # ingrédients du plan
-    for key, recname in plans_db[user].items():
-        if not recname:
-            continue
+    for recname in plans_db[user].values():
+        if not recname: continue
         rec = next((r for r in recipes_db[user] if r["name"]==recname), None)
         if rec:
             for ing in rec["ings"]:
                 k = (ing["name"], ing["unit"])
                 shop[k] = shop.get(k, 0) + ing["qty"]
-    # extras
     for ex in extras_db[user]:
         k = (ex["name"], ex["unit"])
         shop[k] = shop.get(k, 0) + ex["qty"]
