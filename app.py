@@ -5,10 +5,9 @@ import pandas as pd
 # 1) Initialisation session_state
 # ------------------------------------------------------------------
 if "recipes" not in st.session_state:
-    st.session_state.recipes = []        # liste des dict {name, ingredients: [{ing,qty,unit}], instructions}
+    st.session_state.recipes = []        # liste de dict {name, ingredients, instructions}
 
 if "mealplan" not in st.session_state:
-    # Un DataFrame vide avec colonnes Day, Meal, Recipe
     st.session_state.mealplan = pd.DataFrame(columns=["Day","Meal","Recipe"])
 
 # ------------------------------------------------------------------
@@ -16,11 +15,8 @@ if "mealplan" not in st.session_state:
 # ------------------------------------------------------------------
 st.set_page_config(layout="wide")
 st.markdown("<h1 style='text-align:center;'>🍲 Batchist Simplifié</h1>", unsafe_allow_html=True)
-page = st.radio(
-    "Menu",
-    ["Accueil", "Mes recettes", "Planificateur", "Liste de courses"],
-    horizontal=True
-)
+page = st.radio("Menu", ["Accueil", "Mes recettes", "Planificateur", "Liste de courses"],
+                horizontal=True)
 st.markdown("---")
 
 # ------------------------------------------------------------------
@@ -33,10 +29,10 @@ if page == "Accueil":
     st.write("""
       Ce prototype vous permet de :
       1. Ajouter vos recettes  
-      2. Planifier vos repas  
+      2. Planifier vos repas via des cartes par jour  
       3. Générer automatiquement la liste de courses  
       
-      **→ Choisissez un onglet ci-dessous pour commencer.**
+      **→ Choisissez un onglet ci-dessus pour commencer.**
     """)
 
 # --- MES RECETTES ---
@@ -73,30 +69,43 @@ elif page == "Mes recettes":
 
 # --- PLANIFICATEUR ---
 elif page == "Planificateur":
-    st.header("📅 Planificateur de la semaine")
+    st.header("📅 Planificateur de la semaine (cartes)")
     days = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"]
     meals = ["Petit-déjeuner","Déjeuner","Dîner"]
-    df = st.session_state.mealplan.copy()
+
     with st.form("form_plan"):
         plan = []
+        # Pour chaque jour, on dessine une "carte"
         for day in days:
-            for meal in meals:
-                recipe = st.selectbox(f"{day} – {meal}", 
-                                      options=[""] + [r["name"] for r in st.session_state.recipes],
-                                      key=f"plan_{day}_{meal}")
+            st.markdown(
+                f"""
+                <div style="border:1px solid #ccc; border-radius:8px; padding:12px; margin-bottom:12px;
+                            background: #fafafa;">
+                  <strong style="font-size:1.1rem;">{day}</strong>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            cols = st.columns(3)
+            for i,meal in enumerate(meals):
+                cols[i].write(f"**{meal}**")
+                recipe = cols[i].selectbox(
+                    "",
+                    options=[""] + [r["name"] for r in st.session_state.recipes],
+                    key=f"{day}_{meal}"
+                )
                 plan.append(dict(Day=day, Meal=meal, Recipe=recipe))
-        if st.form_submit_button("Enregistrer le plan"):
+        if st.form_submit_button("Enregistrer le planning"):
             st.session_state.mealplan = pd.DataFrame(plan)
-            st.success("Planning mis à jour !")
+            st.success("🎉 Planning sauvegardé !")
 
-    st.markdown("### Aperçu du plan actuel")
+    st.markdown("### Aperçu du plan")
     st.table(st.session_state.mealplan)
 
 # --- LISTE DE COURSES ---
 elif page == "Liste de courses":
     st.header("🛒 Liste de courses générée")
     dfp = st.session_state.mealplan.dropna(subset=["Recipe"])
-    # Récupère ingrédients de chaque recette planifiée
     all_ings = {}
     for recipe_name in dfp["Recipe"].unique():
         rec = next((r for r in st.session_state.recipes if r["name"]==recipe_name), None)
@@ -108,15 +117,8 @@ elif page == "Liste de courses":
     if not all_ings:
         st.info("Aucun ingrédient à lister (plan vide ou recettes manquantes).")
     else:
-        # Constitue un DataFrame
-        data = [{"Ingrédient":k[0], "Unité":k[1], "Quantité":v} 
-                for k,v in all_ings.items()]
+        data = [{"Ingrédient":k[0], "Unité":k[1], "Quantité":v} for k,v in all_ings.items()]
         df_shop = pd.DataFrame(data)
         st.table(df_shop)
-        # Bouton pour télécharger en CSV
         csv = df_shop.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Télécharger CSV", csv, "liste_courses.csv", "text/csv")
-
-# ------------------------------------------------------------------
-# 4) Fin du code
-# ------------------------------------------------------------------
