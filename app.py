@@ -16,7 +16,7 @@ if "extras" not in st.session_state:
     st.session_state.next_extra_id = 1
 if "mealplan" not in st.session_state:
     st.session_state.mealplan = pd.DataFrame(columns=["Day", "Meal", "Recipe"])
-# **Pour Mes recettes** : compteur dynamique d’ingrédients
+# **Compteur d’ingrédients pour le form “Mes recettes”**
 if "recipe_ing_count" not in st.session_state:
     st.session_state.recipe_ing_count = 1
 
@@ -83,9 +83,9 @@ st.set_page_config(layout="wide", page_title="Batchist")
 st.markdown("<h1 style='text-align:center;'>🥣 Batchist</h1>", unsafe_allow_html=True)
 st.write("---")
 
-# Navigation
-pages = ["Accueil", "Mes recettes", "Extras", "Planificateur", "Liste de courses", "Conseils", "Profil"]
-page = st.radio("", pages, index=0, horizontal=True)
+# Navigation horizontale
+pages = ["Accueil","Mes recettes","Extras","Planificateur","Liste de courses","Conseils","Profil"]
+page = st.radio("", pages, horizontal=True)
 st.write("---")
 
 # -----------------------------------------------------------------------------
@@ -103,20 +103,21 @@ if page == "Accueil":
 # -----------------------------------------------------------------------------
 elif page == "Mes recettes":
     st.header("📋 Mes recettes")
-    left, right = st.columns([2,3])
+    col_left, col_right = st.columns([2,3])
 
-    with left.form("add_recipe"):
+    # ➊ Bouton + en dehors du form
+    with col_left:
+        if st.button("➕ Ajouter un ingrédient", key="add_ing_btn"):
+            st.session_state.recipe_ing_count += 1
+
+    # ➋ Formulaire d’ajout de recettes
+    with col_left.form("add_recipe"):
         name = st.text_input("Nom de la recette")
         st.markdown("**Ingrédients**")
-        # Bouton pour ajouter une ligne
-        if st.button("➕ Ajouter un ingrédient", key="add_ing"):
-            st.session_state.recipe_ing_count += 1
-            st.experimental_rerun()
-        # Création dynamique des champs
         ingredients = []
         cols = st.columns([3,1,1])
         for i in range(st.session_state.recipe_ing_count):
-            nm = cols[0].text_input(f"Ingrédient #{i+1}", key=f"ing_nm_{i}")
+            nm = cols[0].text_input(f"Ingréd. #{i+1}", key=f"ing_nm_{i}")
             qt = cols[1].number_input(f"Qté #{i+1}", 0.0, 10000.0, key=f"ing_qt_{i}")
             ut = cols[2].selectbox(f"Unité #{i+1}", ["g","kg","ml","l","u"], key=f"ing_ut_{i}")
             ingredients.append({"name": nm, "qty": qt, "unit": ut})
@@ -134,11 +135,12 @@ elif page == "Mes recettes":
                 "image": img
             })
             st.session_state.next_recipe_id += 1
-            # Réinitialise le nombre de lignes
+            # remise à 1 de la prochaine fois
             st.session_state.recipe_ing_count = 1
             st.success("Recette ajoutée !")
             st.experimental_rerun()
 
+    # ➌ Affichage des recettes existantes
     st.markdown("### Vos recettes")
     for r in st.session_state.recipes:
         st.markdown("---")
@@ -151,7 +153,7 @@ elif page == "Mes recettes":
             st.write(r["instructions"])
             b1, b2, b3 = st.columns(3)
             if b1.button("✏️ Modifier", key=f"mod_{r['id']}"):
-                st.info("Édition non implémentée.")
+                st.info("📌 Édition non implémentée")
             if b2.button("🗑️ Supprimer", key=f"del_{r['id']}"):
                 st.session_state.recipes = [x for x in st.session_state.recipes if x["id"] != r["id"]]
                 st.experimental_rerun()
@@ -166,18 +168,18 @@ elif page == "Extras":
     left, right = st.columns([2,3])
     with left.form("add_extra"):
         name = st.text_input("Nom de l'extra")
-        qty  = st.number_input("Quantité", 0.0, 10000.0, key="ex_qty")
-        unit = st.selectbox("Unité", ["g","kg","ml","l","u"], key="ex_ut")
+        qty  = st.number_input("Quantité",0.0,10000.0,key="ex_qty")
+        unit = st.selectbox("Unité",["g","kg","ml","l","u"],key="ex_ut")
         if st.form_submit_button("Ajouter extra"):
             eid = st.session_state.next_extra_id
-            st.session_state.extras.append({"id": eid, "name": name, "qty": qty, "unit": unit})
-            st.session_state.next_extra_id += 1
+            st.session_state.extras.append({"id":eid,"name":name,"qty":qty,"unit":unit})
+            st.session_state.next_extra_id+=1
             st.success("Extra ajouté !")
     st.markdown("### Vos extras")
     for ex in st.session_state.extras:
-        st.write(f"- {ex['name']} : {ex['qty']} {ex['unit']} ", end="")
-        if st.button("🗑️", key=f"del_ex_{ex['id']}"):
-            st.session_state.extras = [x for x in st.session_state.extras if x["id"] != ex["id"]]
+        st.write(f"- {ex['name']} : {ex['qty']} {ex['unit']} ",end="")
+        if st.button("🗑️",key=f"del_ex_{ex['id']}"):
+            st.session_state.extras = [x for x in st.session_state.extras if x["id"]!=ex["id"]]
             st.experimental_rerun()
 
 # -----------------------------------------------------------------------------
@@ -187,7 +189,6 @@ elif page == "Planificateur":
     st.header("📅 Planificateur de la semaine")
     days  = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"]
     meals = ["Petit-déj","Déjeuner","Dîner"]
-
     with st.form("plan_form"):
         plan = []
         for chunk in (days[:3], days[3:6], days[6:]):
@@ -202,14 +203,11 @@ elif page == "Planificateur":
                     unsafe_allow_html=True
                 )
                 for meal in meals:
-                    sel = col.selectbox(meal, [""] + [r["name"] for r in st.session_state.recipes],
-                                       key=f"{day}_{meal}")
-                    plan.append({"Day": day, "Meal": meal, "Recipe": sel})
-
+                    sel = col.selectbox(meal, [""]+[r["name"] for r in st.session_state.recipes], key=f"{day}_{meal}")
+                    plan.append({"Day":day,"Meal":meal,"Recipe":sel})
         if st.form_submit_button("Enregistrer planning"):
             st.session_state.mealplan = pd.DataFrame(plan)
             st.success("Planning enregistré !")
-
     st.markdown("### Aperçu du planning")
     st.table(st.session_state.mealplan)
 
@@ -219,22 +217,19 @@ elif page == "Planificateur":
 elif page == "Liste de courses":
     st.header("🛒 Liste de courses")
     mp, agg = st.session_state.mealplan, {}
-    # recettes
     for nm in mp["Recipe"].unique():
-        rec = next((r for r in st.session_state.recipes if r["name"] == nm), None)
+        rec = next((r for r in st.session_state.recipes if r["name"]==nm), None)
         if rec:
             for ing in rec["ingredients"]:
-                key = (ing["name"], ing["unit"])
-                agg[key] = agg.get(key, 0) + ing["qty"]
-    # extras
+                key=(ing["name"],ing["unit"])
+                agg[key]=agg.get(key,0)+ing["qty"]
     for ex in st.session_state.extras:
-        key = (ex["name"], ex["unit"])
-        agg[key] = agg.get(key, 0) + ex["qty"]
-
+        key=(ex["name"],ex["unit"])
+        agg[key]=agg.get(key,0)+ex["qty"]
     if not agg:
         st.info("Rien à afficher.")
     else:
-        dfc = pd.DataFrame([{"Item": k[0], "Unit": k[1], "Qty": v} for k, v in agg.items()])
+        dfc = pd.DataFrame([{"Item":k[0],"Unit":k[1],"Qty":v} for k,v in agg.items()])
         st.table(dfc)
         csv = dfc.to_csv(index=False).encode()
         st.download_button("⬇️ Télécharger CSV", csv, "courses.csv", "text/csv")
