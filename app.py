@@ -1,320 +1,276 @@
 import streamlit as st
-import sqlite3
 import json
+from pathlib import Path
 
-# ----------------------------
-# CONST & DB INITIALIZATION
-# ----------------------------
-DB_PATH = "meal_planner.db"
+# ———————————————————————————
+# Helpers pour stocker en JSON
+# ———————————————————————————
+DATA_DIR = Path(st.secrets.get("DATA_DIR", "."))
 
-def get_connection():
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+USERS_FILE    = DATA_DIR / "users.json"
+RECIPES_FILE  = DATA_DIR / "recipes.json"
+EXTRAS_FILE   = DATA_DIR / "extras.json"
+PLANS_FILE    = DATA_DIR / "plans.json"
+PROFILES_FILE = DATA_DIR / "profiles.json"
 
-def init_db():
-    conn = get_connection()
-    c = conn.cursor()
+# Crée les fichiers vides s’ils n’existent pas
+for file in [USERS_FILE, RECIPES_FILE, EXTRAS_FILE, PLANS_FILE, PROFILES_FILE]:
+    if not file.exists():
+        file.write_text("{}")
 
-    # Création initiale des tables (si elles n'existent pas)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS recipes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            ingredients TEXT NOT NULL,
-            instructions TEXT,
-            -- image_url et is_extra ajoutés en migration ci-dessous
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS mealplans (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            day TEXT NOT NULL,
-            meal_time TEXT NOT NULL,
-            recipe_id INTEGER,
-            FOREIGN KEY(user_id) REFERENCES users(id),
-            FOREIGN KEY(recipe_id) REFERENCES recipes(id)
-        )
-    """)
+def load_json(path):
+    return json.loads(path.read_text())
 
-    # Migration : ajout des colonnes manquantes
-    migrations = [
-        ("users",        "household_type TEXT"),
-        ("users",        "num_children INTEGER DEFAULT 0"),
-        ("users",        "num_teens   INTEGER DEFAULT 0"),
-        ("users",        "num_adults  INTEGER DEFAULT 1"),
-        ("users",        "meals_per_day INTEGER DEFAULT 1"),
-        ("recipes",      "image_url   TEXT DEFAULT 'https://via.placeholder.com/150'"),
-        ("recipes",      "is_extra    INTEGER DEFAULT 0")
-    ]
-    for table, col_def in migrations:
-        try:
-            c.execute(f"ALTER TABLE {table} ADD COLUMN {col_def}")
-        except sqlite3.OperationalError:
-            # colonne déjà présente
-            pass
+def save_json(path, data):
+    path.write_text(json.dumps(data, indent=2))
 
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# ----------------------------
-# UTIL FUNCTIONS
-# ----------------------------
-def add_user(u,p):
-    conn = get_connection(); c = conn.cursor()
-    try:
-        c.execute("INSERT INTO users(username,password) VALUES(?,?)", (u,p))
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
+# ———————————————————————————
+# Authentification
+# ———————————————————————————
+def register(username, password):
+    users = load_json(USERS_FILE)
+    if username in users:
         return False
-    finally:
-        conn.close()
+    users[username] = {"password": password}
+    save_json(USERS_FILE, users)
+    return True
 
-def verify_user(u,p):
-    conn = get_connection(); c = conn.cursor()
-    c.execute("SELECT id FROM users WHERE username=? AND password=?", (u,p))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else None
+def login(username, password):
+    users = load_json(USERS_FILE)
+    return username in users and users[username]["password"] == password
 
-def get_recipes(user_id, extra=False):
-    conn = get_connection(); c = conn.cursor()
-    c.execute(
-        "SELECT id,name,ingredients,image_url FROM recipes "
-        "WHERE user_id=? AND is_extra=?", 
-        (user_id, 1 if extra else 0)
-    )
-    rows = c.fetchall()
-    conn.close()
-    return [
-        {"id":r[0],"name":r[1],"ings":json.loads(r[2]),"img":r[3]}
-        for r in rows
-    ]
+def logout():
+    for key in ["user", "edit_profile", "ing"]:
+        st.session_state.pop(key, None)
+    st.experimental_rerun()
 
-def insert_recipe(user_id,name,ings,instr,img_url,extra=False):
-    conn = get_connection(); c = conn.cursor()
-    c.execute("""
-        INSERT INTO recipes(user_id,name,ingredients,instructions,image_url,is_extra)
-        VALUES(?,?,?,?,?,?)
-    """, (
-        user_id,
-        name,
-        json.dumps(ings),
-        instr,
-        img_url,
-        1 if extra else 0
-    ))
-    conn.commit()
-    conn.close()
-
-def delete_recipe(rid):
-    conn = get_connection(); c = conn.cursor()
-    c.execute("DELETE FROM recipes WHERE id=?", (rid,))
-    conn.commit()
-    conn.close()
-
-def upsert_mealplan(user_id,day,meal_time,recipe_id):
-    conn = get_connection(); c = conn.cursor()
-    c.execute("""
-        INSERT INTO mealplans(user_id,day,meal_time,recipe_id)
-        VALUES(?,?,?,?)
-        ON CONFLICT(user_id,day,meal_time) DO UPDATE SET recipe_id=excluded.recipe_id
-    """, (user_id,day,meal_time,recipe_id))
-    conn.commit()
-    conn.close()
-
-def get_plan(user_id):
-    conn = get_connection(); c = conn.cursor()
-    c.execute("SELECT day,meal_time,recipe_id FROM mealplans WHERE user_id=?", (user_id,))
-    rows = c.fetchall()
-    conn.close()
-    plan = {d:{"Petit-déj":None,"Déjeuner":None,"Dîner":None}
-            for d in ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"]}
-    for d,m,r in rows:
-        plan[d][m] = r
-    return plan
-
-# ----------------------------
-# STREAMLIT SETUP
-# ----------------------------
+# ———————————————————————————
+# Setup de la page
+# ———————————————————————————
 st.set_page_config(page_title="Batchist", layout="wide")
-if "user_id" not in st.session_state:     st.session_state.user_id = None
-if "username" not in st.session_state:    st.session_state.username = ""
-if "onboard_done" not in st.session_state:st.session_state.onboard_done = False
 
-# ----------------------------
-# AUTHENTICATION
-# ----------------------------
-def show_auth():
+# ———————————————————————————
+# Écran Inscription / Connexion
+# ———————————————————————————
+if "user" not in st.session_state:
     st.title("🔒 Connexion / Inscription")
-    t1,t2 = st.tabs(["Connexion","Inscription"])
-    with t1:
-        u = st.text_input("Nom d’utilisateur", key="login_user")
-        p = st.text_input("Mot de passe", type="password", key="login_pwd")
-        if st.button("Se connecter"):
-            uid = verify_user(u,p)
-            if uid:
-                st.session_state.user_id = uid
-                st.session_state.username = u
-                st.success(f"Bienvenue, {u} !")
+    mode = st.radio("", ["Connexion", "Inscription"], horizontal=True)
+
+    if mode == "Inscription":
+        with st.form("reg"):
+            user = st.text_input("Nom d'utilisateur")
+            pwd  = st.text_input("Mot de passe", type="password")
+            ok   = st.form_submit_button("S'inscrire")
+        if ok:
+            if register(user, pwd):
+                st.success("Compte créé ! Vous pouvez vous connecter.")
+            else:
+                st.error("Nom d'utilisateur déjà pris.")
+
+    else:  # Connexion
+        with st.form("login"):
+            user = st.text_input("Nom d'utilisateur")
+            pwd  = st.text_input("Mot de passe", type="password")
+            ok   = st.form_submit_button("Se connecter")
+        if ok:
+            if login(user, pwd):
+                st.session_state.user = user
+                st.experimental_rerun()
             else:
                 st.error("Identifiants incorrects.")
-    with t2:
-        u2 = st.text_input("Nom d’utilisateur souhaité", key="reg_user")
-        p2 = st.text_input("Mot de passe", type="password", key="reg_pwd")
-        p3 = st.text_input("Confirmez mot de passe", type="password", key="reg_pwd2")
-        if st.button("Créer mon compte"):
-            if not u2.strip():
-                st.error("Nom requis.")
-            elif p2 != p3:
-                st.error("Mots de passe ne correspondent pas.")
-            else:
-                ok = add_user(u2.strip(), p2)
-                if ok:
-                    st.success("Compte créé ! Connectez-vous.")
-                else:
-                    st.error("Ce nom est déjà pris.")
-
-if st.session_state.user_id is None:
-    show_auth()
     st.stop()
 
-# ----------------------------
-# ONBOARDING
-# ----------------------------
-if not st.session_state.onboard_done:
-    st.title("🚀 Bienvenue sur Batchist !")
-    t = st.radio("Comment vivez-vous ?", ["Solo","Couple","Famille"], key="household_type")
-    ch = st.number_input("Enfants",    min_value=0, step=1, key="num_children")
-    te = st.number_input("Adolescents",min_value=0, step=1, key="num_teens")
-    ad = st.number_input("Adultes",    min_value=1, step=1, key="num_adults")
-    mpd= st.slider("Repas par jour ?", 1,6,3, key="meals_per_day")
-    if st.button("Commencer"):
-        conn = get_connection(); c = conn.cursor()
-        c.execute("""
-            UPDATE users 
-            SET household_type=?, num_children=?, num_teens=?, num_adults=?, meals_per_day=?
-            WHERE id=?
-        """, (t,ch,te,ad,mpd, st.session_state.user_id))
-        conn.commit(); conn.close()
-        st.session_state.onboard_done = True
-        st.experimental_rerun()
+# ———————————————————————————
+# Après connexion : menu horizontal
+# ———————————————————————————
+st.markdown(f"### 🎉 Bienvenue, **{st.session_state.user}** !")
+pages = [
+    "Accueil",
+    "Mes recettes",
+    "Extras",
+    "Planificateur",
+    "Liste de courses",
+    "Conseils",
+    "Profil",
+    "Se déconnecter"
+]
+choice = st.radio("", pages, horizontal=True)
 
-# ----------------------------
-# NAVIGATION
-# ----------------------------
-menu = ["Accueil","Mes recettes","Extras","Planificateur","Liste de courses","Conseils","Profil"]
-page = st.sidebar.radio(f"👋 {st.session_state.username}", menu)
+if choice == "Se déconnecter":
+    logout()
 
-# ----------------------------
-# PAGES
-# ----------------------------
-if page=="Accueil":
-    st.header("🏠 Tableau de bord")
-    st.write("— Vos tendances, favoris et astuces du mois —")
+# ———————————————————————————
+# Chargement des données utilisateur
+# ———————————————————————————
+user = st.session_state.user
+recipes_db  = load_json(RECIPES_FILE)
+extras_db   = load_json(EXTRAS_FILE)
+plans_db    = load_json(PLANS_FILE)
+profiles_db = load_json(PROFILES_FILE)
 
-elif page in ("Mes recettes","Extras"):
-    is_extra = (page=="Extras")
-    st.header("📝 " + page)
-    with st.expander("➕ Ajouter une recette" + (" (extra)" if is_extra else "")):
-        name  = st.text_input("Nom", key="rname")
-        instr = st.text_area("Instructions", key="rinstr")
-        img   = st.text_input("URL image", value="https://via.placeholder.com/150", key="rimg")
-        # initialisation du lissage dynamique
-        if "ings" not in st.session_state: st.session_state.ings = []
-        if st.button("+ Ajouter un ingrédient"):
-            st.session_state.ings.append({"name":"","qty":0.0,"unit":"g"})
-        # édition des lignes ingrédient
-        for i,ing in enumerate(st.session_state.ings):
-            c0,c1,c2,c3 = st.columns([4,2,2,1])
-            ing["name"] = c0.text_input(f"Ingrédient #{i+1}", value=ing["name"], key=f"name{i}")
-            ing["qty"]  = c1.number_input(f"Qté #{i+1}", value=ing["qty"], key=f"qty{i}")
-            ing["unit"] = c2.selectbox(f"Unité #{i+1}", ["g","kg","ml","l","pcs"],
-                                      index=["g","kg","ml","l","pcs"].index(ing["unit"]), key=f"unit{i}")
-            if c3.button("🗑", key=f"del{i}"):
-                st.session_state.ings.pop(i)
-                st.experimental_rerun()
-        if st.button("Ajouter la recette"):
-            insert_recipe(st.session_state.user_id, name, st.session_state.ings, instr, img, extra=is_extra)
-            st.success(f"Recette « {name} » ajoutée !")
-            st.session_state.ings = []
+# Initialise si vide
+recipes_db .setdefault(user, [])
+extras_db  .setdefault(user, [])
+plans_db   .setdefault(user, {})
+profiles_db.setdefault(user, {})
 
-    # affichage en cartes, 3 colonnes
-    recs = get_recipes(st.session_state.user_id, extra=is_extra)
-    cols = st.columns(3)
-    for idx,r in enumerate(recs):
-        with cols[idx%3]:
-            st.image(r["img"], use_column_width=True)
-            st.subheader(r["name"])
-            for ing in r["ings"]:
-                st.write(f"- {ing['name']}: {ing['qty']} {ing['unit']}")
-            b0,b1 = st.columns([1,1])
-            if b0.button("🗑 Supprimer", key=f"delr{r['id']}"):
-                delete_recipe(r["id"]); st.experimental_rerun()
-            if b1.button("🔗 Partager", key=f"sharer{r['id']}"):
-                st.info("Lien copié ! (placeholder)")
+# ———————————————————————————
+# Pages
+# ———————————————————————————
 
-elif page=="Planificateur":
-    st.header("📅 Planificateur de la semaine")
-    plan = get_plan(st.session_state.user_id)
-    days = list(plan.keys())
+if choice == "Accueil":
+    st.title("🏠 Accueil")
+    st.write("📊 Votre tableau de bord arrivera ici.")
+
+elif choice == "Mes recettes":
+    st.title("📋 Mes recettes")
+
+    # Formulaire d'ajout
+    with st.expander("+ Ajouter une recette", expanded=False):
+        with st.form("add_recipe"):
+            name  = st.text_input("Nom de la recette")
+            instr = st.text_area("Instructions", height=120)
+            img   = st.text_input("URL image (placeholder OK)")
+            # Liste dynamique d'ingrédients
+            if "ing" not in st.session_state:
+                st.session_state.ing = [{"name":"", "qty":0.0, "unit":"g"}]
+            cols = st.columns([4,1,1,1])
+            cols[0].button("+ Ingrédient", on_click=lambda: st.session_state.ing.append({"name":"", "qty":0.0, "unit":"g"}))
+            for i, ing in enumerate(st.session_state.ing):
+                c0, c1, c2, c3 = st.columns([4,1,1,1])
+                ing["name"] = c0.text_input(f"Ingrédient #{i+1}", value=ing["name"], key=f"name{i}")
+                ing["qty"]  = c1.number_input(f"Qté #{i+1}", value=ing["qty"], key=f"qty{i}")
+                ing["unit"] = c2.selectbox(f"Unité #{i+1}", ["g","kg","ml","l","pcs"], index=["g","kg","ml","l","pcs"].index(ing["unit"]), key=f"unit{i}")
+                if c3.button("🗑️", key=f"del{i}"):
+                    st.session_state.ing.pop(i)
+                    st.experimental_rerun()
+            ok = st.form_submit_button("Ajouter la recette")
+        if ok and name:
+            recipes_db[user].append({
+                "name": name,
+                "instr": instr,
+                "img": img,
+                "ings": st.session_state.ing.copy()
+            })
+            save_json(RECIPES_FILE, recipes_db)
+            st.success("Recette ajoutée !")
+            st.session_state.ing = [{"name":"", "qty":0.0, "unit":"g"}]
+            st.experimental_rerun()
+
+    st.write("---")
+
+    # Affichage des recettes en 2 colonnes
+    cols = st.columns(2)
+    for i, rec in enumerate(recipes_db[user]):
+        c = cols[i % 2]
+        if rec["img"]:
+            c.image(rec["img"], width=150)
+        c.subheader(rec["name"])
+        for ing in rec["ings"]:
+            c.write(f"- {ing['name']}: {ing['qty']} {ing['unit']}")
+        if c.button("Supprimer", key=f"delrec{i}"):
+            recipes_db[user].pop(i)
+            save_json(RECIPES_FILE, recipes_db)
+            st.experimental_rerun()
+        if c.button("Partager", key=f"share{i}"):
+            st.info(f"Partage de « {rec['name']} » sur les réseaux...")
+
+elif choice == "Extras":
+    st.title("➕ Extras")
+    with st.expander("+ Ajouter un extra", expanded=False):
+        with st.form("add_extra"):
+            e0, e1, e2 = st.columns([4,1,1])
+            name = e0.text_input("Produit")
+            qty  = e1.number_input("Qté")
+            unit = e2.selectbox("Unité", ["g","kg","ml","l","pcs"])
+            ok   = st.form_submit_button("Ajouter")
+        if ok and name:
+            extras_db[user].append({"name":name,"qty":qty,"unit":unit})
+            save_json(EXTRAS_FILE, extras_db)
+            st.success("Extra ajouté !")
+            st.experimental_rerun()
+    st.write("---")
+    for i, ex in enumerate(extras_db[user]):
+        c0, c1, c2, c3 = st.columns([4,1,1,1])
+        c0.write(ex["name"])
+        c1.write(ex["qty"])
+        c2.write(ex["unit"])
+        if c3.button("🗑️", key=f"delx{i}"):
+            extras_db[user].pop(i)
+            save_json(EXTRAS_FILE, extras_db)
+            st.experimental_rerun()
+
+elif choice == "Planificateur":
+    st.title("📅 Planificateur de la semaine")
+    prof = profiles_db[user] or {"meals_per_day": 3}
+    mpd = prof["meals_per_day"]
+    days = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"]
     cols = st.columns(7)
-    for i,d in enumerate(days):
-        with cols[i]:
-            st.subheader(d)
-            for meal in ["Petit-déj","Déjeuner","Dîner"]:
-                sel = st.selectbox(meal, ["—"] + [r["name"] for r in get_recipes(st.session_state.user_id)],
-                                   index=0, key=f"{d}_{meal}")
-                if sel!="—":
-                    rid = next(r["id"] for r in get_recipes(st.session_state.user_id) if r["name"]==sel)
-                    upsert_mealplan(st.session_state.user_id, d, meal, rid)
+    for idx, day in enumerate(days):
+        with cols[idx]:
+            st.subheader(day)
+            for m in range(mpd):
+                key = f"{day}_{m}"
+                opts = [""] + [r["name"] for r in recipes_db[user]]
+                plans_db[user][key] = st.selectbox(f"Repas {m+1}", opts, key=key)
+    if st.button("Enregistrer le plan"):
+        save_json(PLANS_FILE, plans_db)
+        st.success("Plan enregistré !")
 
-elif page=="Liste de courses":
-    st.header("🛒 Liste de courses")
-    plan = get_plan(st.session_state.user_id)
-    all_ings = []
-    for day in plan.values():
-        for rid in day.values():
-            if rid:
-                rec = next(r for r in get_recipes(st.session_state.user_id) if r["id"]==rid)
-                all_ings += rec["ings"]
-    agg = {}
-    for ing in all_ings:
-        key = f"{ing['name']}|{ing['unit']}"
-        if key not in agg: agg[key] = {"name":ing["name"],"unit":ing["unit"],"qty":0}
-        agg[key]["qty"] += ing["qty"]
-    for v in agg.values():
-        st.write(f"- {v['name']}: {v['qty']} {v['unit']}")
+elif choice == "Liste de courses":
+    st.title("🛒 Liste de courses")
+    plan = plans_db[user]
+    shop = {}
+    # ingrédients des recettes du plan
+    for key, recname in plan.items():
+        if not recname: continue
+        rec = next((r for r in recipes_db[user] if r["name"]==recname), None)
+        if rec:
+            for ing in rec["ings"]:
+                k = (ing["name"], ing["unit"])
+                shop[k] = shop.get(k, 0) + ing["qty"]
+    # extras
+    for ex in extras_db[user]:
+        k = (ex["name"], ex["unit"])
+        shop[k] = shop.get(k, 0) + ex["qty"]
+    for (n,u),q in shop.items():
+        st.write(f"- {n}: {q} {u}")
+    # CSV
+    csv = "Produit,Qté,Unité\\n" + "\\n".join(f"{n},{q},{u}" for (n,u),q in shop.items())
+    st.download_button("Télécharger CSV", data=csv, file_name="courses.csv")
 
-elif page=="Conseils":
-    st.header("💡 Conseils & astuces")
-    st.write("— Ici vos meilleures pratiques de batch cooking —")
+elif choice == "Conseils":
+    st.title("💡 Conseils & Astuces")
+    tips = [
+        "Planifiez vos repas le week-end pour gagner du temps.",
+        "Variez les protéines (viande, poisson, végétal).",
+        "Congelez une partie pour plus tard.",
+        "Ajoutez herbes & épices pour relever vos plats."
+    ]
+    for t in tips:
+        st.info(t)
 
-elif page=="Profil":
-    st.header("👤 Profil")
-    conn = get_connection(); c=conn.cursor()
-    c.execute("""
-        SELECT household_type,num_children,num_teens,num_adults,meals_per_day
-        FROM users WHERE id=?
-    """, (st.session_state.user_id,))
-    t,ch,te,ad,mpd = c.fetchone()
-    conn.close()
-    st.write(f"- Foyer : {t}")
-    st.write(f"- Enfants : {ch}")
-    st.write(f"- Ados : {te}")
-    st.write(f"- Adultes : {ad}")
-    st.write(f"- Repas/jour : {mpd}")
+elif choice == "Profil":
+    st.title("👤 Profil")
+    prof = profiles_db[user] or {"household":"Solo","children":0,"teens":0,"adults":1,"meals_per_day":3}
+    st.write(f"- Foyer : {prof['household']}")
+    st.write(f"- Enfants : {prof['children']}")
+    st.write(f"- Ados : {prof['teens']}")
+    st.write(f"- Adultes : {prof['adults']}")
+    st.write(f"- Repas/jour : {prof['meals_per_day']}")
     if st.button("Modifier profil"):
-        st.session_state.onboard_done = False
-        st.experimental_rerun()
+        st.session_state.edit_profile = True
+    if st.session_state.get("edit_profile", False):
+        with st.form("profile_form"):
+            h  = st.selectbox("Type de foyer", ["Solo","Couple","Famille"], index=["Solo","Couple","Famille"].index(prof["household"]))
+            ch = st.number_input("Enfants", prof["children"], 0, 10)
+            te = st.number_input("Adolescents", prof["teens"], 0, 10)
+            ad = st.number_input("Adultes", prof["adults"], 1, 10)
+            mp = st.slider("Repas par jour", 1, 6, prof["meals_per_day"])
+            ok = st.form_submit_button("Valider")
+        if ok:
+            profiles_db[user] = {"household":h,"children":ch,"teens":te,"adults":ad,"meals_per_day":mp}
+            save_json(PROFILES_FILE, profiles_db)
+            st.success("Profil mis à jour !")
+            st.session_state.edit_profile = False
+            st.experimental_rerun()
