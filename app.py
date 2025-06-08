@@ -202,60 +202,82 @@ elif page == "Mes recettes":
 
     # ➡️ Modifier une recette
     if st.session_state.edit_idx is not None:
-        idx = st.session_state.edit_idx
-        rec = recipes_db[user][idx]
-        st.subheader(f"Modifier « {rec['name']} »")
-        st.session_state.tmp2_name  = st.text_input(
-            "Nom de la recette", value=rec["name"]
-        )
-        st.session_state.tmp2_instr = st.text_area(
-            "Description / instructions", value=rec["instr"], height=80
-        )
-        st.session_state.tmp2_img   = st.text_input(
-            "URL de l'image", value=rec["img"]
-        )
-        if not st.session_state.tmp2_ings:
-            # clone des ingredients existants
-            st.session_state.tmp2_ings = json.loads(json.dumps(rec["ings"]))
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("➕ Ingrédient", key="edi_add_ing"):
-                st.session_state.tmp2_ings.append({"name":"", "qty":0.0, "unit":"g"})
-                do_rerun()
-            for i, ing in enumerate(st.session_state.tmp2_ings):
-                c0,c1,c2,c3 = st.columns([3,1,1,1])
-                ing["name"] = c0.text_input(
-                    f"Ingrédient #{i+1}", value=ing["name"], key=f"ed_nm_{i}"
-                )
-                ing["qty"]  = c1.number_input(
-                    "", value=ing["qty"], key=f"ed_qt_{i}"
-                )
-                ing["unit"] = c2.selectbox(
-                    "", ["g","kg","ml","l","pcs"],
-                    index=["g","kg","ml","l","pcs"].index(ing["unit"]),
-                    key=f"ed_un_{i}"
-                )
-                if c3.button("🗑️", key=f"ed_del_{i}"):
-                    st.session_state.tmp2_ings.pop(i)
-                    do_rerun()
-        with col2:
-            st.markdown("**Aperçu**")
-            for ing in st.session_state.tmp2_ings:
-                st.write(f"- {ing['name']}: {ing['qty']} {ing['unit']}")
-        if st.button("💾 Enregistrer modifications"):
-            recipes_db[user][idx] = {
-                "name":  st.session_state.tmp2_name,
-                "instr": st.session_state.tmp2_instr,
-                "img":   st.session_state.tmp2_img,
-                "ings":  st.session_state.tmp2_ings.copy()
-            }
-            save_json(RECIPES_FILE, recipes_db)
-            st.success("Recette mise à jour !")
-            # reset edit
-            st.session_state.edit_idx   = None
-            st.session_state.tmp2_ings  = []
+    idx = st.session_state.edit_idx
+    rec = recipes_db[user][idx]
+
+    st.subheader(f"Modifier « {rec['name']} »")
+
+    # On récupère directement dans des variables locales
+    new_name = st.text_input(
+        "Nom de la recette",
+        value=rec["name"],
+        key=f"edit_name_{idx}"
+    )
+    new_instr = st.text_area(
+        "Description / instructions",
+        value=rec["instr"],
+        height=80,
+        key=f"edit_instr_{idx}"
+    )
+    new_img = st.text_input(
+        "URL de l'image",
+        value=rec["img"],
+        key=f"edit_img_{idx}"
+    )
+
+    # Initialisation du clonage des ingrédients une seule fois
+    if not st.session_state.get(f"edit_ings_{idx}", None):
+        st.session_state[f"edit_ings_{idx}"] = json.loads(json.dumps(rec["ings"]))
+
+    ings2 = st.session_state[f"edit_ings_{idx}"]
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("➕ Ingrédient", key=f"edi_add_ing_{idx}"):
+            ings2.append({"name":"", "qty":0.0, "unit":"g"})
             do_rerun()
-        st.write("---")
+        for i, ing in enumerate(ings2):
+            c0, c1, c2, c3 = st.columns([3,1,1,1])
+            ing["name"] = c0.text_input(
+                f"Ingrédient #{i+1}",
+                value=ing["name"],
+                key=f"ed_nm_{idx}_{i}"
+            )
+            ing["qty"] = c1.number_input(
+                "",
+                value=ing["qty"],
+                key=f"ed_qt_{idx}_{i}"
+            )
+            ing["unit"] = c2.selectbox(
+                "",
+                ["g","kg","ml","l","pcs"],
+                index=["g","kg","ml","l","pcs"].index(ing["unit"]),
+                key=f"ed_un_{idx}_{i}"
+            )
+            if c3.button("🗑️", key=f"ed_del_{idx}_{i}"):
+                ings2.pop(i)
+                do_rerun()
+
+    with col2:
+        st.markdown("**Aperçu**")
+        for ing in ings2:
+            st.write(f"- {ing['name']}: {ing['qty']} {ing['unit']}")
+
+    if st.button("💾 Enregistrer modifications", key=f"edi_save_{idx}"):
+        recipes_db[user][idx] = {
+            "name":  new_name,
+            "instr": new_instr,
+            "img":   new_img,
+            "ings":  ings2.copy()
+        }
+        save_json(RECIPES_FILE, recipes_db)
+        st.success("Recette mise à jour !")
+        # Réinitialisation de l'édition
+        st.session_state.edit_idx = None
+        st.session_state.pop(f"edit_ings_{idx}", None)
+        do_rerun()
+
+    st.write("---")
 
     # Affichage des cartes
     cols = st.columns(2)
