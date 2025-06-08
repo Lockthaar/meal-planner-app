@@ -3,6 +3,16 @@ import json
 from pathlib import Path
 
 # ————————————————————————————————————————————————
+#   Wrapper “re-run” robuste
+# ————————————————————————————————————————————————
+def do_rerun():
+    try:
+        st.experimental_rerun()
+    except Exception:
+        # Si experimental_rerun() n'existe plus, on continue sans planter
+        pass
+
+# ————————————————————————————————————————————————
 #   Configuration de la page
 # ————————————————————————————————————————————————
 st.set_page_config(
@@ -11,7 +21,7 @@ st.set_page_config(
 )
 
 # ————————————————————————————————————————————————
-#   Affichage de la bannière principale
+#   Bannière en haut
 # ————————————————————————————————————————————————
 st.markdown(
     """
@@ -24,7 +34,7 @@ st.markdown(
 )
 
 # ————————————————————————————————————————————————
-#   Répertoire de données & fichiers JSON (crée si nécessaire)
+#   Répertoire de données & JSON
 # ————————————————————————————————————————————————
 DATA_DIR = Path(st.secrets.get("DATA_DIR", "."))
 DATA_DIR.mkdir(exist_ok=True)
@@ -35,6 +45,7 @@ EXTRAS_FILE  = DATA_DIR / "extras.json"
 PLANS_FILE   = DATA_DIR / "plans.json"
 PROF_FILE    = DATA_DIR / "profiles.json"
 
+# Crée les fichiers si besoin
 for fp in (USERS_FILE, RECIPES_FILE, EXTRAS_FILE, PLANS_FILE, PROF_FILE):
     if not fp.exists():
         fp.write_text("{}")
@@ -45,14 +56,15 @@ def load_json(fp: Path):
 def save_json(fp: Path, data):
     fp.write_text(json.dumps(data, indent=2))
 
+
 # ————————————————————————————————————————————————
-#   Utilisateurs persistants
+#   Gestion persistante des utilisateurs
 # ————————————————————————————————————————————————
 users_db = load_json(USERS_FILE)
 
 def register_user(username, pwd):
     username = username.strip()
-    if username in users_db or not username or not pwd:
+    if not username or not pwd or username in users_db:
         return False
     users_db[username] = {"password": pwd}
     save_json(USERS_FILE, users_db)
@@ -62,14 +74,14 @@ def check_login(username, pwd):
     username = username.strip()
     return username in users_db and users_db[username]["password"] == pwd
 
-def logout_and_rerun():
+def do_logout():
     if "user" in st.session_state:
         del st.session_state.user
-    st.experimental_rerun()
+    do_rerun()
 
 
 # ————————————————————————————————————————————————
-#   Page de connexion / inscription
+#   Écran Connexion / Inscription
 # ————————————————————————————————————————————————
 if "user" not in st.session_state:
     choice = st.radio("", ["Connexion", "Inscription"], horizontal=True)
@@ -82,9 +94,9 @@ if "user" not in st.session_state:
             ok   = st.form_submit_button("S'inscrire")
         if ok:
             if register_user(new_u, new_p):
-                st.success("Inscription réussie ! Vous pouvez maintenant vous connecter.")
+                st.success("Inscription réussie ! Connectez-vous.")
             else:
-                st.error("Échec d'inscription : nom indisponible ou champs vides.")
+                st.error("Nom indisponible ou champs vides.")
         st.stop()
 
     # Connexion
@@ -96,7 +108,7 @@ if "user" not in st.session_state:
     if ok:
         if check_login(u, p):
             st.session_state.user = u.strip()
-            st.experimental_rerun()
+            do_rerun()
         else:
             st.error("Identifiants incorrects.")
     st.stop()
@@ -113,42 +125,40 @@ page = st.sidebar.radio("Navigation", [
     "Conseils", "Profil", "Se déconnecter"
 ])
 if page == "Se déconnecter":
-    logout_and_rerun()
+    do_logout()
 
 
 # ————————————————————————————————————————————————
-#   Charger les autres bases de données
+#   Chargement des autres données
 # ————————————————————————————————————————————————
 recipes_db  = load_json(RECIPES_FILE)
 extras_db   = load_json(EXTRAS_FILE)
 plans_db    = load_json(PLANS_FILE)
 profiles_db = load_json(PROF_FILE)
 
-# Initialiser la clé de l’utilisateur
+# Garantir l’existence d’une clé pour l’utilisateur
 for db in (recipes_db, extras_db, plans_db, profiles_db):
-    db.setdefault(user, [] if db is recipes_db or db is extras_db else {})
+    default = [] if db in (recipes_db, extras_db) else {}
+    db.setdefault(user, default)
 
-# Eviter les objets vides
-recipes_db[user]  = recipes_db[user]  or []
-extras_db[user]   = extras_db[user]   or []
-
+recipes_db[user] = recipes_db[user] or []
+extras_db[user]  = extras_db[user]  or []
 
 
 # ————————————————————————————————————————————————
-#   Accueil
+#   Page Accueil
 # ————————————————————————————————————————————————
 if page == "Accueil":
     st.title("🏠 Accueil")
-    st.write("Bienvenue sur **Batchist** ! Utilisez le menu latéral pour naviguer.")
+    st.write("Bienvenue sur **Batchist** ! Choisissez une section dans le menu.")
 
 
 # ————————————————————————————————————————————————
-#   Mes recettes
+#   Page Mes recettes
 # ————————————————————————————————————————————————
 elif page == "Mes recettes":
     st.title("📋 Mes recettes")
 
-    # Toggle formulaire
     if "show_form" not in st.session_state:
         st.session_state.show_form = False
         st.session_state.ings = [{"name":"", "qty":0.0, "unit":"g"}]
@@ -159,11 +169,10 @@ elif page == "Mes recettes":
     if st.session_state.show_form:
         with st.form("add_recipe", clear_on_submit=True):
             name  = st.text_input("Nom de la recette")
-            instr = st.text_area("Instructions", height=100)
+            instr = st.text_area("Instructions")
             img   = st.text_input("URL de l'image (placeholder OK)")
 
-            c1, c2 = st.columns([1,1])
-            # ← création dynamique des ingrédients
+            c1, c2 = st.columns(2)
             with c1:
                 if st.form_submit_button("➕ Ingrédient", on_click=lambda: st.session_state.ings.append({"name":"","qty":0.0,"unit":"g"})):
                     pass
@@ -171,13 +180,14 @@ elif page == "Mes recettes":
                     col0, col1, col2, col3 = st.columns([3,1,1,1])
                     ing["name"] = col0.text_input(f"Ingrédient #{i+1}", value=ing["name"], key=f"n_{i}")
                     ing["qty"]  = col1.number_input("", value=ing["qty"], key=f"q_{i}")
-                    ing["unit"] = col2.selectbox("", ["g","kg","ml","l","pcs"], index=["g","kg","ml","l","pcs"].index(ing["unit"]), key=f"u_{i}")
+                    ing["unit"] = col2.selectbox("", ["g","kg","ml","l","pcs"],
+                                                 index=["g","kg","ml","l","pcs"].index(ing["unit"]),
+                                                 key=f"u_{i}")
                     if col3.button("🗑️", key=f"d_{i}"):
                         st.session_state.ings.pop(i)
 
-            # → aperçu
             with c2:
-                st.markdown("**Aperçu ingrédients**")
+                st.markdown("**Aperçu des ingrédients**")
                 for ing in st.session_state.ings:
                     st.write(f"- {ing['name']}: {ing['qty']} {ing['unit']}")
 
@@ -197,7 +207,7 @@ elif page == "Mes recettes":
                 st.success("Recette ajoutée !")
                 st.session_state.ings = [{"name":"", "qty":0.0, "unit":"g"}]
                 st.session_state.show_form = False
-                st.experimental_rerun()
+                do_rerun()
 
     st.write("---")
     cols = st.columns(2)
@@ -211,13 +221,13 @@ elif page == "Mes recettes":
         if c.button("🗑️ Supprimer", key=f"dr{idx}"):
             recipes_db[user].pop(idx)
             save_json(RECIPES_FILE, recipes_db)
-            st.experimental_rerun()
+            do_rerun()
         if c.button("🔗 Partager", key=f"sr{idx}"):
             st.info(f"Partage de « {rec['name']} »…")
 
 
 # ————————————————————————————————————————————————
-#   Extras
+#   Page Extras
 # ————————————————————————————————————————————————
 elif page == "Extras":
     st.title("➕ Extras")
@@ -231,7 +241,7 @@ elif page == "Extras":
             extras_db[user].append({"name":nom.strip(),"qty":qty,"unit":unit})
             save_json(EXTRAS_FILE, extras_db)
             st.success("Extra ajouté !")
-            st.experimental_rerun()
+            do_rerun()
 
     st.write("---")
     for i, ex in enumerate(extras_db[user]):
@@ -240,11 +250,11 @@ elif page == "Extras":
         if c3.button("🗑️", key=f"dx{i}"):
             extras_db[user].pop(i)
             save_json(EXTRAS_FILE, extras_db)
-            st.experimental_rerun()
+            do_rerun()
 
 
 # ————————————————————————————————————————————————
-#   Planificateur
+#   Page Planificateur
 # ————————————————————————————————————————————————
 elif page == "Planificateur":
     st.title("📅 Planificateur de la semaine")
@@ -268,12 +278,11 @@ elif page == "Planificateur":
 
 
 # ————————————————————————————————————————————————
-#   Liste de courses
+#   Page Liste de courses
 # ————————————————————————————————————————————————
 elif page == "Liste de courses":
     st.title("🛒 Liste de courses")
     shop = {}
-    # recettes planifiées
     for recname in plans_db[user].values():
         if not recname: continue
         rec = next((r for r in recipes_db[user] if r["name"]==recname), None)
@@ -281,7 +290,6 @@ elif page == "Liste de courses":
             for ing in rec["ings"]:
                 k = (ing["name"], ing["unit"])
                 shop[k] = shop.get(k,0) + ing["qty"]
-    # extras
     for ex in extras_db[user]:
         k = (ex["name"], ex["unit"])
         shop[k] = shop.get(k,0) + ex["qty"]
@@ -294,22 +302,21 @@ elif page == "Liste de courses":
 
 
 # ————————————————————————————————————————————————
-#   Conseils & Astuces
+#   Page Conseils
 # ————————————————————————————————————————————————
 elif page == "Conseils":
     st.title("💡 Conseils & Astuces")
-    tips = [
+    for tip in [
         "Planifiez vos repas à l'avance.",
         "Variez les couleurs dans vos assiettes.",
         "Préparez des portions à congeler.",
-        "Utilisez des herbes fraîches pour relever vos plats.",
-    ]
-    for t in tips:
-        st.info(t)
+        "Utilisez des herbes fraîches pour relever vos plats."
+    ]:
+        st.info(tip)
 
 
 # ————————————————————————————————————————————————
-#   Profil
+#   Page Profil
 # ————————————————————————————————————————————————
 elif page == "Profil":
     st.title("👤 Profil")
@@ -332,15 +339,15 @@ elif page == "Profil":
             c = st.number_input("Enfants", prof["children"], 0, 10)
             t = st.number_input("Ados", prof["teens"], 0, 10)
             a = st.number_input("Adultes", prof["adults"], 1, 20)
-            m = st.slider("Repas/jour", 1, 6, prof["meals_per_day"])
-            ok = st.form_submit_button("Valider")
+            m = st.slider("Repas par jour", 1, 6, prof["meals_per_day"])
+            ok= st.form_submit_button("Valider")
         if ok:
             profiles_db[user] = {
-                "household":h, "children":c,
-                "teens":t,      "adults":a,
+                "household":h,"children":c,
+                "teens":t,    "adults":a,
                 "meals_per_day":m
             }
             save_json(PROF_FILE, profiles_db)
             st.success("Profil mis à jour !")
             st.session_state.edit_prof = False
-            st.experimental_rerun()
+            do_rerun()
