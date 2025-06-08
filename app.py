@@ -2,39 +2,23 @@ import streamlit as st
 import json
 from pathlib import Path
 
-# ————————————————————————————————————————————————
-#   Wrapper “re-run” robuste
-# ————————————————————————————————————————————————
+# ————— Helper rerun —————————————————————————————————————
 def do_rerun():
     try:
         st.experimental_rerun()
-    except Exception:
+    except:
         pass
 
-# ————————————————————————————————————————————————
-#   Configuration de la page
-# ————————————————————————————————————————————————
-st.set_page_config(
-    page_title="Batchist — Batch cooking simplifié",
-    layout="wide",
-)
+# ————— Page config & bannière —————————————————————————————————
+st.set_page_config(page_title="Batchist", layout="wide")
+st.markdown("""
+<div style="display:flex;align-items:center;gap:10px">
+  <h1>🍽️ Batchist — Batch cooking simplifié</h1>
+</div>
+<hr>
+""", unsafe_allow_html=True)
 
-# ————————————————————————————————————————————————
-#   Bannière en haut
-# ————————————————————————————————————————————————
-st.markdown(
-    """
-    <div style="display:flex;align-items:center;gap:10px">
-      <h1>🍽️ Batchist — Batch cooking simplifié</h1>
-    </div>
-    <hr>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ————————————————————————————————————————————————
-#   Répertoire de données & JSON
-# ————————————————————————————————————————————————
+# ————— Fichiers & JSON on disk —————————————————————————————
 DATA_DIR = Path(st.secrets.get("DATA_DIR", "."))
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -48,57 +32,48 @@ for fp in (USERS_FILE, RECIPES_FILE, EXTRAS_FILE, PLANS_FILE, PROF_FILE):
     if not fp.exists():
         fp.write_text("{}")
 
-def load_json(fp: Path):
+def load_json(fp):
     return json.loads(fp.read_text())
 
-def save_json(fp: Path, data):
+def save_json(fp, data):
     fp.write_text(json.dumps(data, indent=2))
 
-
-# ————————————————————————————————————————————————
-#   Gestion persistante des utilisateurs
-# ————————————————————————————————————————————————
+# ————— Gestion des utilisateurs persistante ——————————————————————————
 users_db = load_json(USERS_FILE)
 
-def register_user(username, pwd):
-    username = username.strip()
-    if not username or not pwd or username in users_db:
+def register_user(u, p):
+    u = u.strip()
+    if not u or not p or u in users_db:
         return False
-    users_db[username] = {"password": pwd}
+    users_db[u] = {"password": p}
     save_json(USERS_FILE, users_db)
     return True
 
-def check_login(username, pwd):
-    username = username.strip()
-    return username in users_db and users_db[username]["password"] == pwd
+def check_login(u, p):
+    u = u.strip()
+    return u in users_db and users_db[u]["password"] == p
 
 def do_logout():
-    if "user" in st.session_state:
-        del st.session_state.user
+    st.session_state.pop("user", None)
     do_rerun()
 
-
-# ————————————————————————————————————————————————
-#   Écran Connexion / Inscription
-# ————————————————————————————————————————————————
+# ————— Ecran connexion / inscription —————————————————————————————
 if "user" not in st.session_state:
     choice = st.radio("", ["Connexion", "Inscription"], horizontal=True)
-
     if choice == "Inscription":
         st.subheader("📝 Inscription")
-        with st.form("reg", clear_on_submit=True):
-            new_u = st.text_input("Nom d'utilisateur")
-            new_p = st.text_input("Mot de passe", type="password")
-            ok   = st.form_submit_button("S'inscrire")
+        with st.form("form_reg", clear_on_submit=True):
+            nu = st.text_input("Nom d'utilisateur")
+            np = st.text_input("Mot de passe", type="password")
+            ok = st.form_submit_button("S'inscrire")
         if ok:
-            if register_user(new_u, new_p):
-                st.success("Inscription réussie ! Connectez-vous.")
+            if register_user(nu, np):
+                st.success("Inscription réussie ! Vous pouvez vous connecter.")
             else:
-                st.error("Nom indisponible ou champs vides.")
+                st.error("Nom déjà pris ou champs vides.")
         st.stop()
-
     st.subheader("🔐 Connexion")
-    with st.form("login", clear_on_submit=False):
+    with st.form("form_log", clear_on_submit=False):
         u = st.text_input("Nom d'utilisateur")
         p = st.text_input("Mot de passe", type="password")
         ok = st.form_submit_button("Se connecter")
@@ -110,10 +85,7 @@ if "user" not in st.session_state:
             st.error("Identifiants incorrects.")
     st.stop()
 
-
-# ————————————————————————————————————————————————
-#   Sidebar & navigation
-# ————————————————————————————————————————————————
+# ————— Sidebar & nav —————————————————————————————————————
 user = st.session_state.user
 st.sidebar.markdown(f"👤 **Connecté en tant que {user}**")
 page = st.sidebar.radio("Navigation", [
@@ -124,10 +96,7 @@ page = st.sidebar.radio("Navigation", [
 if page == "Se déconnecter":
     do_logout()
 
-
-# ————————————————————————————————————————————————
-#   Chargement des autres données
-# ————————————————————————————————————————————————
+# ————— Charger les DB —————————————————————————————————————
 recipes_db  = load_json(RECIPES_FILE)
 extras_db   = load_json(EXTRAS_FILE)
 plans_db    = load_json(PLANS_FILE)
@@ -140,114 +109,174 @@ for db in (recipes_db, extras_db, plans_db, profiles_db):
 recipes_db[user] = recipes_db[user] or []
 extras_db[user]  = extras_db[user]  or []
 
-
-# ————————————————————————————————————————————————
-#   Page Accueil
-# ————————————————————————————————————————————————
+# ————— Page Accueil —————————————————————————————————————
 if page == "Accueil":
     st.title("🏠 Accueil")
-    st.write("Bienvenue sur **Batchist** ! Choisissez une section dans le menu.")
+    st.write("Bienvenue sur **Batchist** ! Sélectionnez une section dans le menu latéral.")
 
-
-# ————————————————————————————————————————————————
-#   Page Mes recettes (réécrite SANS st.form pour ingrédients)
-# ————————————————————————————————————————————————
+# ————— Page Mes recettes —————————————————————————————————————
 elif page == "Mes recettes":
     st.title("📋 Mes recettes")
 
-    # Initialisation du form state
-    if "show_form" not in st.session_state:
-        st.session_state.show_form = False
-        st.session_state.ings      = [{"name":"", "qty":0.0, "unit":"g"}]
-        st.session_state.tmp_name  = ""
-        st.session_state.tmp_instr = ""
-        st.session_state.tmp_img   = ""
+    # initialisation state si besoin
+    if "show_add" not in st.session_state:
+        st.session_state.show_add   = False
+        st.session_state.tmp_name    = ""
+        st.session_state.tmp_instr   = ""
+        st.session_state.tmp_img     = ""
+        st.session_state.tmp_ings    = [{"name":"", "qty":0.0, "unit":"g"}]
+    if "edit_idx" not in st.session_state:
+        st.session_state.edit_idx    = None
+        st.session_state.tmp2_name   = ""
+        st.session_state.tmp2_instr  = ""
+        st.session_state.tmp2_img    = ""
+        st.session_state.tmp2_ings   = []
 
-    # Bouton pour afficher/masquer le formulaire
+    # ➕ Ajouter nouvelle recette
     if st.button("➕ Ajouter une recette"):
-        st.session_state.show_form = not st.session_state.show_form
+        st.session_state.show_add = not st.session_state.show_add
+        st.session_state.edit_idx = None
 
-    if st.session_state.show_form:
+    if st.session_state.show_add:
         st.subheader("Nouvelle recette")
-        # Champs de base
+        # champs de base
         st.session_state.tmp_name  = st.text_input(
             "Nom de la recette", value=st.session_state.tmp_name
         )
         st.session_state.tmp_instr = st.text_area(
-            "Instructions", value=st.session_state.tmp_instr, height=100
+            "Description / instructions",
+            value=st.session_state.tmp_instr, height=80
         )
         st.session_state.tmp_img   = st.text_input(
-            "URL de l'image (placeholder OK)", value=st.session_state.tmp_img
+            "URL de l'image (placeholder OK)",
+            value=st.session_state.tmp_img
         )
-
+        # ingrédients dynamiques
         col1, col2 = st.columns(2)
-        # ← Partie ingrédients
         with col1:
             if st.button("➕ Ingrédient"):
-                st.session_state.ings.append({"name":"", "qty":0.0, "unit":"g"})
+                st.session_state.tmp_ings.append({"name":"", "qty":0.0, "unit":"g"})
                 do_rerun()
-
-            for i, ing in enumerate(st.session_state.ings):
+            for i, ing in enumerate(st.session_state.tmp_ings):
                 c0, c1, c2, c3 = st.columns([3,1,1,1])
                 ing["name"] = c0.text_input(
                     f"Ingrédient #{i+1}",
-                    value=ing["name"],
-                    key=f"name_{i}"
+                    value=ing["name"], key=f"add_nm_{i}"
                 )
-                ing["qty"] = c1.number_input(
-                    "", value=ing["qty"], key=f"qty_{i}"
+                ing["qty"]  = c1.number_input(
+                    "", value=ing["qty"], key=f"add_qt_{i}"
                 )
                 ing["unit"] = c2.selectbox(
                     "", ["g","kg","ml","l","pcs"],
                     index=["g","kg","ml","l","pcs"].index(ing["unit"]),
-                    key=f"unit_{i}"
+                    key=f"add_un_{i}"
                 )
-                if c3.button("🗑️", key=f"del_{i}"):
-                    st.session_state.ings.pop(i)
+                if c3.button("🗑️", key=f"add_del_{i}"):
+                    st.session_state.tmp_ings.pop(i)
                     do_rerun()
-
-        # → Aperçu
         with col2:
-            st.markdown("**Aperçu des ingrédients**")
-            for ing in st.session_state.ings:
+            st.markdown("**Aperçu**")
+            for ing in st.session_state.tmp_ings:
                 st.write(f"- {ing['name']}: {ing['qty']} {ing['unit']}")
-
-        # Bouton final pour sauvegarder
-        if st.button("💾 Ajouter la recette"):
+        if st.button("💾 Enregistrer cette recette"):
             if not st.session_state.tmp_name.strip():
-                st.error("Le nom est requis.")
+                st.error("Le nom est obligatoire.")
             else:
                 recipes_db[user].append({
-                    "name": st.session_state.tmp_name.strip(),
+                    "name":  st.session_state.tmp_name.strip(),
                     "instr": st.session_state.tmp_instr,
                     "img":   st.session_state.tmp_img,
-                    "ings":  st.session_state.ings.copy()
+                    "ings":  st.session_state.tmp_ings.copy()
                 })
                 save_json(RECIPES_FILE, recipes_db)
                 st.success("Recette ajoutée !")
-                # Réinitialisation
-                st.session_state.ings      = [{"name":"", "qty":0.0, "unit":"g"}]
+                # reset
                 st.session_state.tmp_name  = ""
                 st.session_state.tmp_instr = ""
                 st.session_state.tmp_img   = ""
-                st.session_state.show_form = False
+                st.session_state.tmp_ings  = [{"name":"", "qty":0.0, "unit":"g"}]
+                st.session_state.show_add  = False
                 do_rerun()
 
     st.write("---")
-    # Affichage existant
+
+    # ➡️ Modifier une recette
+    if st.session_state.edit_idx is not None:
+        idx = st.session_state.edit_idx
+        rec = recipes_db[user][idx]
+        st.subheader(f"Modifier « {rec['name']} »")
+        st.session_state.tmp2_name  = st.text_input(
+            "Nom de la recette", value=rec["name"]
+        )
+        st.session_state.tmp2_instr = st.text_area(
+            "Description / instructions", value=rec["instr"], height=80
+        )
+        st.session_state.tmp2_img   = st.text_input(
+            "URL de l'image", value=rec["img"]
+        )
+        if not st.session_state.tmp2_ings:
+            # clone des ingredients existants
+            st.session_state.tmp2_ings = json.loads(json.dumps(rec["ings"]))
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("➕ Ingrédient", key="edi_add_ing"):
+                st.session_state.tmp2_ings.append({"name":"", "qty":0.0, "unit":"g"})
+                do_rerun()
+            for i, ing in enumerate(st.session_state.tmp2_ings):
+                c0,c1,c2,c3 = st.columns([3,1,1,1])
+                ing["name"] = c0.text_input(
+                    f"Ingrédient #{i+1}", value=ing["name"], key=f"ed_nm_{i}"
+                )
+                ing["qty"]  = c1.number_input(
+                    "", value=ing["qty"], key=f"ed_qt_{i}"
+                )
+                ing["unit"] = c2.selectbox(
+                    "", ["g","kg","ml","l","pcs"],
+                    index=["g","kg","ml","l","pcs"].index(ing["unit"]),
+                    key=f"ed_un_{i}"
+                )
+                if c3.button("🗑️", key=f"ed_del_{i}"):
+                    st.session_state.tmp2_ings.pop(i)
+                    do_rerun()
+        with col2:
+            st.markdown("**Aperçu**")
+            for ing in st.session_state.tmp2_ings:
+                st.write(f"- {ing['name']}: {ing['qty']} {ing['unit']}")
+        if st.button("💾 Enregistrer modifications"):
+            recipes_db[user][idx] = {
+                "name":  st.session_state.tmp2_name,
+                "instr": st.session_state.tmp2_instr,
+                "img":   st.session_state.tmp2_img,
+                "ings":  st.session_state.tmp2_ings.copy()
+            }
+            save_json(RECIPES_FILE, recipes_db)
+            st.success("Recette mise à jour !")
+            # reset edit
+            st.session_state.edit_idx   = None
+            st.session_state.tmp2_ings  = []
+            do_rerun()
+        st.write("---")
+
+    # Affichage des cartes
     cols = st.columns(2)
     for idx, rec in enumerate(recipes_db[user]):
         c = cols[idx % 2]
         if rec.get("img"):
             c.image(rec["img"], width=150)
         c.subheader(rec["name"])
+        c.write(rec["instr"])
         for ing in rec["ings"]:
             c.write(f"- {ing['name']}: {ing['qty']} {ing['unit']}")
-        if c.button("🗑️ Supprimer", key=f"dr{idx}"):
+        btns = c.columns(3)
+        if btns[0].button("✏️ Modifier", key=f"mod_{idx}"):
+            st.session_state.edit_idx   = idx
+            st.session_state.tmp2_ings  = []
+            do_rerun()
+        if btns[1].button("🗑️ Supprimer", key=f"del_{idx}"):
             recipes_db[user].pop(idx)
             save_json(RECIPES_FILE, recipes_db)
             do_rerun()
-        if c.button("🔗 Partager", key=f"sr{idx}"):
+        if btns[2].button("🔗 Partager", key=f"sh_{idx}"):
             st.info(f"Partage de « {rec['name']} »…")
 
 # ————————————————————————————————————————————————
