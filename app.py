@@ -1,32 +1,26 @@
+# app.py
 import streamlit as st
 import json
+import pandas as pd
 from pathlib import Path
 
-# ————————————————————————————
-# Configuration page
-# ————————————————————————————
-st.set_page_config(page_title="Batchist", layout="wide")
-
-# ————————————————————————————
-# Répertoire de données + fichiers JSON
-# ————————————————————————————
+# ─── Helper JSON ──────────────────────────────────────────────────────
 DATA_DIR = Path(st.secrets.get("DATA_DIR", "."))
-for fname in ("users.json", "recipes.json", "extras.json", "plans.json", "profiles.json"):
-    fp = DATA_DIR / fname
-    if not fp.exists():
-        fp.write_text("{}")
+for fname in ("users.json","recipes.json","extras.json","plans.json","profiles.json"):
+    (DATA_DIR/fname).write_text((DATA_DIR/fname).read_text() if (DATA_DIR/fname).exists() else "{}")
 
-def load_json(fp: Path):
-    return json.loads(fp.read_text() or "{}")
+def load_json(fp):
+    return json.loads(Path(fp).read_text() or "{}")
 
-def save_json(fp: Path, data):
-    fp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+def save_json(fp, data):
+    Path(fp).write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
-USERS_FILE    = DATA_DIR / "users.json"
-RECIPES_FILE  = DATA_DIR / "recipes.json"
-EXTRAS_FILE   = DATA_DIR / "extras.json"
-PLANS_FILE    = DATA_DIR / "plans.json"
-PROFILES_FILE = DATA_DIR / "profiles.json"
+# ─── Charger DB ──────────────────────────────────────────────────────
+USERS_FILE    = DATA_DIR/"users.json"
+RECIPES_FILE  = DATA_DIR/"recipes.json"
+EXTRAS_FILE   = DATA_DIR/"extras.json"
+PLANS_FILE    = DATA_DIR/"plans.json"
+PROFILES_FILE = DATA_DIR/"profiles.json"
 
 users_db    = load_json(USERS_FILE)
 recipes_db  = load_json(RECIPES_FILE)
@@ -34,42 +28,39 @@ extras_db   = load_json(EXTRAS_FILE)
 plans_db    = load_json(PLANS_FILE)
 profiles_db = load_json(PROFILES_FILE)
 
-# ————————————————————————————
-# Gestion utilisateurs persistée
-# ————————————————————————————
-def register_user(u, p):
+# ─── Fonctions Utilisateurs ──────────────────────────────────────────
+def register_user(u,p):
     if u in users_db:
         return False
-    users_db[u] = {"password": p}
+    users_db[u] = {"password":p}
     save_json(USERS_FILE, users_db)
     return True
 
-def check_login(u, p):
-    return u in users_db and users_db[u]["password"] == p
+def check_login(u,p):
+    return u in users_db and users_db[u]["password"]==p
 
-def logout():
-    if "user" in st.session_state:
-        del st.session_state.user
+def do_logout():
+    st.session_state.clear()
     st.experimental_rerun()
 
-# ————————————————————————————
-# Login / Signup
-# ————————————————————————————
+# ─── Configuration Streamlit ────────────────────────────────────────
+st.set_page_config("Batchist","wide")
 if "user" not in st.session_state:
+    # Écran Login / Signup
     st.title("🔒 Connexion / Inscription")
-    choice = st.radio("", ["Connexion", "Inscription"], horizontal=True)
-    if choice == "Inscription":
+    choice = st.radio("",["Connexion","Inscription"],horizontal=True)
+    if choice=="Inscription":
         with st.form("form_reg", clear_on_submit=True):
-            new_u = st.text_input("Nom d'utilisateur")
-            new_p = st.text_input("Mot de passe", type="password")
+            nu = st.text_input("Nom d'utilisateur")
+            npw = st.text_input("Mot de passe", type="password")
             ok = st.form_submit_button("S'inscrire")
         if ok:
-            if not new_u or not new_p:
+            if not nu or not npw:
                 st.error("Tous les champs sont requis.")
-            elif register_user(new_u.strip(), new_p):
-                st.success("Inscription réussie ! Vous pouvez maintenant vous connecter.")
+            elif register_user(nu.strip(),npw):
+                st.success("Inscription OK : connectez-vous.")
             else:
-                st.error("Nom d'utilisateur déjà pris.")
+                st.error("Nom déjà pris.")
         st.stop()
     else:
         with st.form("form_log", clear_on_submit=True):
@@ -77,156 +68,130 @@ if "user" not in st.session_state:
             p = st.text_input("Mot de passe", type="password")
             ok = st.form_submit_button("Se connecter")
         if ok:
-            if check_login(u.strip(), p):
+            if check_login(u.strip(),p):
                 st.session_state.user = u.strip()
                 st.experimental_rerun()
             else:
                 st.error("Identifiants incorrects.")
         st.stop()
 
-# ————————————————————————————
-# Préparation des bases de l’utilisateur
-# ————————————————————————————
+# ─── Préparer les données de l’utilisateur ───────────────────────────
 user = st.session_state.user
-for db in (recipes_db, extras_db, plans_db, profiles_db):
-    db.setdefault(user, [] if db is recipes_db or db is extras_db else {})
+for db, default in [
+    (recipes_db,[]), (extras_db,[]), (plans_db,{}), (profiles_db,{})
+]:
+    db.setdefault(user, default)
 
-# ————————————————————————————
-# Barre latérale
-# ————————————————————————————
-st.sidebar.markdown(f"👤 **Connecté en tant que {user}**")
-page = st.sidebar.radio("Navigation", [
-    "Accueil", "Mes recettes", "Extras",
-    "Planificateur", "Liste de courses",
-    "Conseils", "Profil", "Se déconnecter"
+# ─── Sidebar & Menu ─────────────────────────────────────────────────
+st.sidebar.markdown(f"👤 **Connecté : {user}**")
+page = st.sidebar.radio("Navigation",[
+    "Accueil","Mes recettes","Extras",
+    "Planificateur","Liste de courses",
+    "Conseils","Profil","Se déconnecter"
 ])
-if page == "Se déconnecter":
-    logout()
+if page=="Se déconnecter":
+    do_logout()
 
-# ————————————————————————————
-# Accueil
-# ————————————————————————————
-if page == "Accueil":
-    st.title("🏠 Accueil")
-    st.write("Bienvenue sur **Batchist**, votre batch cooking simplifié !")
+# ─── ACCUEIL ─────────────────────────────────────────────────────────
+if page=="Accueil":
+    st.title("🏠 Batchist — Batch cooking simplifié")
+    st.write("Bienvenue ! Choisissez un onglet dans la barre latérale.")
 
-# ————————————————————————————
-# Mes recettes
-# ————————————————————————————
-elif page == "Mes recettes":
+# ─── MES RECETTES ────────────────────────────────────────────────────
+elif page=="Mes recettes":
     st.title("📋 Mes recettes")
-    tmp = st.session_state.setdefault("tmp_ings", [{"name":"", "qty":0.0, "unit":"g"}])
-    show = st.session_state.setdefault("show_rec_form", False)
-    edit_idx = st.session_state.get("edit_idx", None)
-
-    # + Ajouter une recette
+    # Toggle formulaire
+    if "show_form" not in st.session_state:
+        st.session_state.show_form = False
     if st.button("+ Ajouter une recette"):
-        st.session_state.show_rec_form = not show
-        st.session_state.edit_idx = None
+        st.session_state.show_form = not st.session_state.show_form
 
-    # Bouton + Ingrédient (hors form)
-    if show and edit_idx is None:
-        if st.button("+ Ingrédient"):
-            tmp.append({"name":"", "qty":0.0, "unit":"g"})
-
-    # Formulaire d'ajout ou d'édition
-    if show:
-        mode = "Modifier" if edit_idx is not None else "Nouvelle"
-        st.subheader(f"{mode} recette")
-        with st.form("recipe_form", clear_on_submit=False):
-            name = st.text_input("Nom de la recette",
-                                 value= recipes_db[user][edit_idx]["name"] if edit_idx is not None else "")
-            instr = st.text_area("Instructions",
-                                 value= recipes_db[user][edit_idx]["instr"] if edit_idx is not None else "",
-                                 height=100)
-            img = st.text_input("URL de l'image (placeholder OK)",
-                                value= recipes_db[user][edit_idx]["img"] if edit_idx is not None else "")
-            # Ingrédients dynamiques
-            cols = st.columns([3,1,1,1])
-            for i, ing in enumerate(tmp):
-                c0,c1,c2,c3 = cols
-                ing["name"] = c0.text_input(f"Ingrédient #{i+1}", value=ing["name"], key=f"n_{i}")
-                ing["qty"]  = c1.number_input("", value=ing["qty"], key=f"q_{i}")
-                ing["unit"] = c2.selectbox("", ["g","kg","ml","l","pcs"],
-                                          index=["g","kg","ml","l","pcs"].index(ing["unit"]), key=f"u_{i}")
-                if c3.button("🗑️", key=f"d_{i}"):
-                    tmp.pop(i)
+    if st.session_state.show_form:
+        st.subheader("➕ Nouvelle recette")
+        with st.form("frm_recipe", clear_on_submit=True):
+            name  = st.text_input("Nom de la recette")
+            instr = st.text_area("Instructions", height=100)
+            img   = st.text_input("URL de l'image (placeholder OK)")
+            # Table interactive des ingrédients
+            df = pd.DataFrame(st.session_state.get("tmp_ings",[]),
+                              columns=["name","qty","unit"])
+            out = st.experimental_data_editor(
+                df, num_rows="dynamic", use_container_width=True
+            )
+            # Soumettre
+            ok = st.form_submit_button("Enregistrer la recette")
+            if ok:
+                if not name.strip():
+                    st.error("Le nom est obligatoire.")
+                else:
+                    recipes_db[user].append({
+                        "name":name.strip(),
+                        "instr":instr,
+                        "img":img,
+                        "ings": out.to_dict("records")
+                    })
+                    save_json(RECIPES_FILE, recipes_db)
+                    st.success("Recette ajoutée !")
+                    # Réinit
+                    st.session_state.tmp_ings = []
+                    st.session_state.show_form = False
                     st.experimental_rerun()
 
-            submit = st.form_submit_button("Enregistrer")
-
-        if submit:
-            if not name.strip():
-                st.error("Le nom est requis.")
-            else:
-                entry = {"name":name.strip(), "instr":instr, "img":img, "ings":tmp.copy()}
-                if edit_idx is None:
-                    recipes_db[user].append(entry)
-                    st.success("Recette ajoutée !")
-                else:
-                    recipes_db[user][edit_idx] = entry
-                    st.success("Recette mise à jour !")
-                    st.session_state.edit_idx = None
-                save_json(RECIPES_FILE, recipes_db)
-                st.session_state.tmp_ings = [{"name":"", "qty":0.0, "unit":"g"}]
-                st.session_state.show_rec_form = False
-                st.experimental_rerun()
-
     st.markdown("---")
-    # Affichage des cartes
+    # Affichage cartes 2 colonnes
     cols = st.columns(2)
-    for idx, rec in enumerate(recipes_db[user]):
-        c = cols[idx%2]
+    for i, rec in enumerate(recipes_db[user]):
+        c = cols[i%2]
         if rec["img"]:
-            c.image(rec["img"], width=150)
+            c.image(rec["img"],width=150)
         c.subheader(rec["name"])
         for ing in rec["ings"]:
             c.write(f"- {ing['name']}: {ing['qty']} {ing['unit']}")
-        btn1, btn2, btn3 = c.columns([1,1,1])
-        if btn1.button("✏️ Modifier", key=f"m_{idx}"):
-            st.session_state.show_rec_form = True
-            st.session_state.edit_idx = idx
-            st.session_state.tmp_ings = rec["ings"].copy()
-            st.experimental_rerun()
-        if btn2.button("🗑️ Supprimer", key=f"x_{idx}"):
-            recipes_db[user].pop(idx)
+        m,s,p = c.columns([1,1,1])
+        if m.button("✏️ Modifier", key=f"m_{i}"):
+            # Précharger en session
+            st.session_state.tmp_ings = rec["ings"]
+            st.session_state.show_form = True
+            # On supprime l’ancienne carte pour réécrire
+            recipes_db[user].pop(i)
             save_json(RECIPES_FILE, recipes_db)
             st.experimental_rerun()
-        if btn3.button("🔗 Partager", key=f"s_{idx}"):
-            st.info(f"Partager « {rec['name']} »…")
+        if s.button("🗑️ Supprimer", key=f"x_{i}"):
+            recipes_db[user].pop(i)
+            save_json(RECIPES_FILE, recipes_db)
+            st.experimental_rerun()
+        if p.button("🔗 Partager", key=f"sh_{i}"):
+            st.info(f"Partage de « {rec['name']} »…")
 
-# ————————————————————————————
-# Extras
-# ————————————————————————————
-elif page == "Extras":
-    st.title("➕ Extras")
+# ─── EXTRAS ───────────────────────────────────────────────────────────
+elif page=="Extras":
+    st.title("➕ Extras (produits ménagers, boissons, etc.)")
     with st.expander("+ Ajouter un extra"):
-        with st.form("extra_form", clear_on_submit=True):
+        with st.form("frm_extra", clear_on_submit=True):
             nom  = st.text_input("Produit")
             qty  = st.number_input("Quantité", min_value=0.0)
             unit = st.selectbox("Unité", ["g","kg","ml","l","pcs"])
             ok   = st.form_submit_button("Ajouter")
-        if ok and nom.strip():
-            extras_db[user].append({"name":nom.strip(),"qty":qty,"unit":unit})
-            save_json(EXTRAS_FILE, extras_db)
-            st.success("Extra ajouté !")
-            st.experimental_rerun()
+            if ok and nom.strip():
+                extras_db[user].append({"name":nom,"qty":qty,"unit":unit})
+                save_json(EXTRAS_FILE, extras_db)
+                st.success("Extra ajouté !")
+                st.experimental_rerun()
+
     st.markdown("---")
-    for i, ex in enumerate(extras_db[user]):
+    for j, ex in enumerate(extras_db[user]):
         c0,c1,c2,c3 = st.columns([4,1,1,1])
         c0.write(ex["name"]); c1.write(ex["qty"]); c2.write(ex["unit"])
-        if c3.button("🗑️", key=f"del_ex{i}"):
-            extras_db[user].pop(i)
+        if c3.button("🗑️", key=f"del_{j}"):
+            extras_db[user].pop(j)
             save_json(EXTRAS_FILE, extras_db)
             st.experimental_rerun()
 
-# ————————————————————————————
-# Planificateur
-# ————————————————————————————
-elif page == "Planificateur":
+# ─── PLANIFICATEUR ──────────────────────────────────────────────────
+elif page=="Planificateur":
     st.title("📅 Planificateur de la semaine")
-    prof = profiles_db[user] or {}
-    mpd  = prof.get("meals_per_day", 3)
+    prof = profiles_db[user] or {"meals_per_day":3}
+    mpd = prof["meals_per_day"]
     days = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"]
     cols = st.columns(7)
     for d, day in enumerate(days):
@@ -235,53 +200,50 @@ elif page == "Planificateur":
             for m in range(mpd):
                 key = f"{day}_{m}"
                 choix = [""] + [r["name"] for r in recipes_db[user]]
-                val = plans_db[user].get(key, "")
+                val = plans_db[user].get(key,"")
                 plans_db[user][key] = st.selectbox("", choix, index=choix.index(val), key=key)
-    if st.button("Enregistrer le plan"):
+    if st.button("💾 Enregistrer le plan"):
         save_json(PLANS_FILE, plans_db)
         st.success("Plan enregistré !")
 
-# ————————————————————————————
-# Liste de courses
-# ————————————————————————————
-elif page == "Liste de courses":
+# ─── LISTE DE COURSES ────────────────────────────────────────────────
+elif page=="Liste de courses":
     st.title("🛒 Liste de courses")
     shop = {}
-    for key, recname in plans_db[user].items():
-        if not recname: continue
-        rec = next((r for r in recipes_db[user] if r["name"]==recname), None)
+    # recettes plan
+    for recn in plans_db[user].values():
+        if not recn: continue
+        rec = next((r for r in recipes_db[user] if r["name"]==recn),None)
         if rec:
             for ing in rec["ings"]:
-                k = (ing["name"], ing["unit"])
-                shop[k] = shop.get(k, 0) + ing["qty"]
+                k=(ing["name"],ing["unit"])
+                shop[k]=shop.get(k,0)+ing["qty"]
+    # extras
     for ex in extras_db[user]:
-        k = (ex["name"], ex["unit"])
-        shop[k] = shop.get(k, 0) + ex["qty"]
+        k=(ex["name"],ex["unit"])
+        shop[k]=shop.get(k,0)+ex["qty"]
     for (n,u),q in shop.items():
         st.write(f"- {n}: {q} {u}")
     csv = "Produit,Quantité,Unité\n" + "\n".join(f"{n},{q},{u}" for (n,u),q in shop.items())
-    st.download_button("📥 Télécharger CSV", csv, file_name="liste_courses.csv")
+    st.download_button("📥 Télécharger CSV", csv, file_name="courses.csv")
 
-# ————————————————————————————
-# Conseils & Astuces
-# ————————————————————————————
-elif page == "Conseils":
+# ─── CONSEILS ────────────────────────────────────────────────────────
+elif page=="Conseils":
     st.title("💡 Conseils & Astuces")
     for tip in [
         "Planifiez vos repas à l'avance.",
-        "Variez les couleurs dans vos assiettes.",
+        "Variez les couleurs dans votre assiettes.",
         "Préparez des portions à congeler.",
         "Utilisez des herbes fraîches pour relever vos plats."
     ]:
         st.info(tip)
 
-# ————————————————————————————
-# Profil
-# ————————————————————————————
-elif page == "Profil":
+# ─── PROFIL ─────────────────────────────────────────────────────────
+elif page=="Profil":
     st.title("👤 Profil")
     prof = profiles_db[user] or {
-        "household":"Solo","children":0,"teens":0,"adults":1,"meals_per_day":3
+        "household":"Solo","children":0,
+        "teens":0,"adults":1,"meals_per_day":3
     }
     st.write(f"- Foyer      : {prof['household']}")
     st.write(f"- Enfants    : {prof['children']}")
@@ -290,20 +252,23 @@ elif page == "Profil":
     st.write(f"- Repas/jour : {prof['meals_per_day']}")
     if st.button("✏️ Modifier le profil"):
         st.session_state.edit_prof = True
-    if st.session_state.get("edit_prof", False):
-        with st.form("form_prof", clear_on_submit=True):
+
+    if st.session_state.get("edit_prof",False):
+        with st.form("frm_prof", clear_on_submit=True):
             h = st.selectbox("Type de foyer", ["Solo","Couple","Famille"],
                              index=["Solo","Couple","Famille"].index(prof["household"]))
             c = st.number_input("Enfants", prof["children"], 0, 10)
             t = st.number_input("Ados", prof["teens"], 0, 10)
             a = st.number_input("Adultes", prof["adults"], 1, 20)
             m = st.slider("Repas par jour", 1, 6, prof["meals_per_day"])
-            ok = st.form_submit_button("Valider")
+            ok=st.form_submit_button("Valider")
         if ok:
-            profiles_db[user] = {"household":h, "children":c,
-                                 "teens":t, "adults":a,
-                                 "meals_per_day":m}
+            profiles_db[user] = {
+                "household":h,"children":c,
+                "teens":t,"adults":a,
+                "meals_per_day":m
+            }
             save_json(PROFILES_FILE, profiles_db)
             st.success("Profil mis à jour !")
-            st.session_state.edit_prof = False
+            st.session_state.edit_prof=False
             st.experimental_rerun()
